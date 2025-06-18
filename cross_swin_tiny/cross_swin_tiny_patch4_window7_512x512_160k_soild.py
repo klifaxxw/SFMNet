@@ -150,7 +150,7 @@ log_config = dict(
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 load_from = 'cross_swin/iter_100010.pth'
-resume_from = None
+resume_from = 'cross_swin_tiny/iter_70007.pth'
 workflow = [('train', 1)]
 cudnn_benchmark = True
 optimizer = dict(

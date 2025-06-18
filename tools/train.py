@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument(
         '--load-from', default="cross_swin/iter_100010.pth", help='the checkpoint file to load weights from')
     parser.add_argument(
-        '--resume-from', help='the checkpoint file to resume from')
+        '--resume-from', default="cross_swin_tiny/iter_70007.pth",  help='the checkpoint file to resume from')
     parser.add_argument(
         '--no-validate',
         action='store_true',
