@@ -196,24 +196,30 @@ class PatchMerging2D(nn.Module):
 
     def forward(self, x):
         B, H, W, C = x.shape
+
         SHAPE_FIX = [-1, -1]
         if (W % 2 != 0) or (H % 2 != 0):
             print(f"Warning, x.shape {x.shape} is not match even ===========", flush=True)
             SHAPE_FIX[0] = H // 2
             SHAPE_FIX[1] = W // 2
+
         x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
         x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
         x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
         x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
+
         if SHAPE_FIX[0] > 0:
             x0 = x0[:, :SHAPE_FIX[0], :SHAPE_FIX[1], :]
             x1 = x1[:, :SHAPE_FIX[0], :SHAPE_FIX[1], :]
             x2 = x2[:, :SHAPE_FIX[0], :SHAPE_FIX[1], :]
             x3 = x3[:, :SHAPE_FIX[0], :SHAPE_FIX[1], :]
+
         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
         x = x.view(B, H // 2, W // 2, 4 * C)  # B H/2*W/2 4*C
+
         x = self.norm(x)
         x = self.reduction(x)
+
         return x
 
 
@@ -230,6 +236,7 @@ class PatchExpand(nn.Module):
         B, H, W, C = x.shape
         x = rearrange(x, 'b h w (p1 p2 c)-> b (h p1) (w p2) c', p1=2, p2=2, c=C // 4)
         x = self.norm(x)
+
         return x
 
 
@@ -248,6 +255,7 @@ class FinalPatchExpand_X4(nn.Module):
         x = rearrange(x, 'b h w (p1 p2 c)-> b (h p1) (w p2) c', p1=self.dim_scale, p2=self.dim_scale,
                       c=C // (self.dim_scale ** 2))
         x = self.norm(x)
+
         return x
 
 
@@ -354,8 +362,8 @@ class SS2D(nn.Module):
             dt_proj.bias.copy_(inv_dt)
         # Our initialization would set all Linear.bias to zero, need to mark this one as _no_reinit
         dt_proj.bias._no_reinit = True
-        return dt_proj
 
+        return dt_proj
 
     @staticmethod
     def A_log_init(d_state, d_inner, copies=1, device=None, merge=True):
@@ -426,6 +434,7 @@ class SS2D(nn.Module):
         y = out_y[:, 0] + inv_y[:, 0] + wh_y + invwh_y
         y = torch.transpose(y, dim0=1, dim1=2).contiguous().view(B, H, W, -1)
         y = self.out_norm(y).to(x.dtype)
+
         return y
 
     def forward_corev0_seq(self, x: torch.Tensor):

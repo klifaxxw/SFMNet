@@ -1,3 +1,7 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import torch
 import torch.nn as nn
 import math
@@ -8,6 +12,16 @@ from mmcv.runner import BaseModule
 from ..builder import BACKBONES
 from ..utils.vssm_layer import PatchEmbed2D, PatchMerging2D, VSSLayer
 from mmseg.utils.logger import get_root_logger
+
+class Reshape(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # self.sizes = sizes
+
+    def forward(self, x):
+        y = x.permute((0, 3, 1, 2))
+        return y
+
 
 @BACKBONES.register_module()
 class MambaUE(BaseModule):
@@ -66,7 +80,9 @@ class MambaUE(BaseModule):
                 use_checkpoint=use_checkpoint,
             )
             self.layers.append(layer)
-
+            setattr(self, f"reshape{i_layer + 1}", Reshape())
+        
+        self.reshape5 = Reshape()  
         # 输出层的归一化
         self.norm = norm_layer(self.num_features)
 
@@ -111,10 +127,13 @@ class MambaUE(BaseModule):
             pass
         outs = []
         for i, layer in enumerate(self.layers):
-            y = x.permute((0, 3, 1, 2))
-            outs.append(y)
+            reshape = getattr(self, f"reshape{i + 1}")
+            # y = x.permute((0, 3, 1, 2))
+            x = reshape(x)
+            outs.append(x)
+            x = x.permute((0, 2, 3, 1))
             x = layer(x)
         x = self.norm(x)
-        y = x.permute((0, 3, 1, 2))
+        y = self.reshape5(x)
         outs.append(y)
         return tuple(outs)

@@ -265,6 +265,21 @@ class EncoderDecoder(BaseSegmentor):
         seg_pred = list(seg_pred)
         return seg_pred
 
+    # def simple_test(self, img, img_meta, rescale=True):
+    #     seg_logit = self.inference(img, img_meta, rescale)
+    #     # seg_pred = seg_logit.argmax(dim=1)
+    #     seg_pred = seg_logit
+    #     if torch.onnx.is_in_onnx_export():
+    #         # our inference backend only support 4D output
+    #         seg_pred = seg_pred.unsqueeze(0)
+    #         return seg_pred
+    #     # seg_pred = seg_pred.cpu().numpy()
+    #     # unravel batch dim
+    #     # seg_pred = list(seg_pred)
+    #     return seg_pred
+
+
+
     def aug_test(self, imgs, img_metas, rescale=True):
         """Test with augmentations.
 

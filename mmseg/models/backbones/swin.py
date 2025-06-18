@@ -72,8 +72,8 @@ class WindowMSA(BaseModule):
         self.attn_drop = nn.Dropout(attn_drop_rate)
         self.proj = nn.Linear(embed_dims, embed_dims)
         self.proj_drop = nn.Dropout(proj_drop_rate)
-        self.softmax = nn.Softmax(dim=-1)
 
+        self.softmax = nn.Softmax(dim=-1)
 
     def init_weights(self):
         trunc_normal_(self.relative_position_bias_table, std=0.02)

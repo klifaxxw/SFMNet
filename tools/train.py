@@ -28,10 +28,13 @@ from mmseg.utils import (collect_env, get_device, get_root_logger,
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
-    parser.add_argument('--config', default="local_configs/Umamba/unet_mamba_tiny_soild_160k_adwn.py", help='train config file path')
-    parser.add_argument('--work-dir', default="Umamba_tiny", help='the dir to save logs and models')
+    # 1 local_configs/Umamba/unet_mamba_tiny_soild_160k_adwn.py
+    # 2  'local_configs/cswin/cross_swin_tiny_patch4_window7_512x512_160k_soild.py'
+    parser.add_argument('--config', default='local_configs/cswin/cross_swin_tiny_patch4_window7_512x512_160k_soild.py', help='train config file path')
+    # Umamba_tiny
+    parser.add_argument('--work-dir', default="cross_swin_tiny", help='the dir to save logs and models')
     parser.add_argument(
-        '--load-from', help='the checkpoint file to load weights from')
+        '--load-from', default="cross_swin/iter_100010.pth", help='the checkpoint file to load weights from')
     parser.add_argument(
         '--resume-from', help='the checkpoint file to resume from')
     parser.add_argument(
@@ -242,7 +245,5 @@ def main():
         validate=(not args.no_validate),
         timestamp=timestamp,
         meta=meta)
-
-
 if __name__ == '__main__':
     main()

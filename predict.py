@@ -91,7 +91,7 @@ class WrappedModel(torch.nn.Module):
         self.model = model
 
     def forward(self, batched_inputs):
-
+        
         img_meta = {
             'filename': 'D:/x/model/model/unet/VOCdevkit/VOC2007/JPEGImages/0.png',
             'flip': False,
@@ -169,19 +169,19 @@ def get_flops(model, input_shape=(1, 3, 512, 512)):
 
 
 if __name__ == "__main__":
-    pass
-    # register_soild_semantic()
-    # # dir_save_seg_path = r"Umamba/seg"
-    # # dir_save_boundary_path = r"Umamba/boundary"
-    # # Path(dir_save_seg_path).mkdir(parents=True, exist_ok=True)
-    # # Path(dir_save_boundary_path).mkdir(parents=True, exist_ok=True)
-    # config = r"unet_mamba_tiny_soild_160k_adwn.py"
-    # cfg = Config.fromfile(config)
-    # model_state_file = r"Umamba_tiny/iter_170000.pth"
-    # cfg.model.train_cfg = None
-    # model = build_segmentor(cfg.model, test_cfg=cfg.get('test_cfg'))
-    # model.cuda().eval()
-    # get_flops(model)
+
+    register_soild_semantic()
+    # dir_save_seg_path = r"Umamba/seg"
+    # dir_save_boundary_path = r"Umamba/boundary"
+    # Path(dir_save_seg_path).mkdir(parents=True, exist_ok=True)
+    # Path(dir_save_boundary_path).mkdir(parents=True, exist_ok=True)
+    config = r"unet_mamba_tiny_soild_160k_adwn.py"
+    cfg = Config.fromfile(config)
+    model_state_file = r"Umamba_tiny/iter_170000.pth"
+    cfg.model.train_cfg = None
+    model = build_segmentor(cfg.model, test_cfg=cfg.get('test_cfg'))
+    model.cuda().eval()
+    get_flops(model)
     
     # # register_soild_semantic()
     # checkpoint = load_checkpoint(model, model_state_file, map_location='cpu')
@@ -307,41 +307,3 @@ if __name__ == "__main__":
     #             contour = np.array(contour)
     #             cv2.drawContours(oimage, [contour], -1, (0, 0, 255), 5)
     #     cv2.imwrite(os.path.join(dir_save_boundary_path, name + ".png"), oimage)
-
-    # with open(os.path.join(VOCdevkit_path, "VOC2007/ImageSets/Segmentation/val.txt"), "r") as f:
-    #     val_lines = f.readlines()
-    # dataset = UnetDataset(val_lines, input_shape, num_classes, False, VOCdevkit_path)
-    # for data in tqdm(dataset):
-    #     # img = input('Input image filename:')
-    #     image_path, label_path, name = data
-    #     oimg = Image.open(image_path)
-    #     oimg = oimg.convert("RGB")
-    #     oimage = np.asarray(oimg, dtype='uint8')
-    #     oimg = torch.from_numpy(oimage).float() / 255.0
-    #     oimg = oimg.unsqueeze(0).permute(0, 3, 1, 2).cuda()
-    #     pr = inference(config, model, oimg)
-    #     bimage = pr.astype(np.uint8)
-    #     seg_img = np.reshape(np.array(colors, np.uint8)[np.reshape(pr, [-1])], [512, 512, -1])
-    #     oimage = cv2.cvtColor(oimage, cv2.COLOR_RGB2BGR)
-    #     r_image = Image.fromarray(np.uint8(seg_img))
-    #     r_image.save(os.path.join(dir_save_seg_path, name + ".png"))
-    #     imgs = morphology.remove_small_holes(bimage, 200, connectivity=2)
-    #     imgs = morphology.remove_small_objects(imgs, 200, connectivity=2)
-    #     imgs = np.array(imgs, dtype=np.uint8)
-    #     contours, hierarchys = cv2.findContours(imgs, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    #     labelss = []
-    #     labelso = []
-    #     if len(contours) > 0:
-    #         for i, (contour, hierarchy) in enumerate(zip(contours, hierarchys[0])):
-    #             child_idx = hierarchy[2]
-    #             parent_idx = hierarchy[3]
-    #             if parent_idx != -1:
-    #                 labelso.append(contour.reshape((-1, 2)).tolist())
-    #             else:
-    #                 labelss.append(contour.reshape((-1, 2)).tolist())
-    #         for contour in labelss:
-    #             contour = np.array(contour)
-    #             cv2.drawContours(oimage, [contour], -1, (0, 0, 255), 5)
-    #     cv2.imwrite(os.path.join(dir_save_boundary_path, name + ".png"), oimage)
-
-

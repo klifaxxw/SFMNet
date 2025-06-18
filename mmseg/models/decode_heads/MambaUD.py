@@ -6,11 +6,18 @@ from ..utils.vssm_layer import VSSLayer_up, PatchExpand, FinalPatchExpand_X4
 import math
 from timm.models.layers import  trunc_normal_
 
+class Reshape(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # self.sizes = sizes
+
+    def forward(self, x):
+        y = x.permute((0, 3, 1, 2))
+        return y
 
 @HEADS.register_module()
 class MambaUD(BaseDecodeHead):
     """Mamba UNet Decode Head"""
-
     def __init__(self,
                  depths=[2, 2, 9, 2],
                  dims=[96, 192, 384, 768],
@@ -75,7 +82,8 @@ class MambaUD(BaseDecodeHead):
         self.up = FinalPatchExpand_X4(dim_scale=4, dim=self.embed_dim)
         self.output = nn.Conv2d(in_channels=self.embed_dim, out_channels=self.num_classes, kernel_size=1,
                                     bias=False)
-
+        self.reshape_final = Reshape()  # 用于将输出转换为B,C,H,W格式
+        self.reshape_final_1 = Reshape()
         # 初始化权重
         self.apply(self._init_weights)
 
@@ -123,10 +131,11 @@ class MambaUD(BaseDecodeHead):
                 x = self.concat_back_dim[inx](x)
                 x = layer_up(x)
         x = self.norm_up(x)  # B H W C
-
+        x = self.reshape_final(x)
+        x = x.permute(0, 2, 3, 1)
         B, H, W, C = x.shape
         x = self.up(x)
         x = x.view(B, 4 * H, 4 * W, -1)
-        x = x.permute(0, 3, 1, 2)  # B,C,H,W
+        x = self.reshape_final_1(x)  # B,C,H,W
         x = self.output(x)
         return x

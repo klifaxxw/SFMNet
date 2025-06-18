@@ -429,6 +429,7 @@ class VisionTransformer(BaseModule):
                 if self.output_cls_token:
                     out = [out, x[:, 0]]
                 outs.append(out)
+
         return tuple(outs)
 
     def train(self, mode=True):
