@@ -169,7 +169,7 @@ def get_flops(model, input_shape=(1, 3, 512, 512)):
 
 
 if __name__ == "__main__":
-
+    pass
     # register_soild_semantic()
     # # dir_save_seg_path = r"Umamba/seg"
     # # dir_save_boundary_path = r"Umamba/boundary"
