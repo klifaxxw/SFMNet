@@ -1,7 +1,7 @@
-# bdformer: Hybridizing Mamba and Transformer to Improve Enhanced Boundary Segmentation 
+# bdfomer: Hybridizing Mamba and Transformer to Improve Enhanced Dustproof Net Boundary Segmentation based on UAV 
 
 
-The repository contains official Pytorch implementations of training and evaluation codes and pre-trained models for **SegNext**. 
+The repository contains official Pytorch implementations of training and evaluation codes and pre-trained models for **bdfomer**. 
 
 The paper is in [Here](https://arxiv.org/pdf/2209.08575.pdf).
 
@@ -19,8 +19,6 @@ If you find our repo useful for your research, please consider citing our paper:
 ```
 
 ## Results
-
-
 
 
 
