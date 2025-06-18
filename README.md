@@ -68,12 +68,12 @@ bash tools/get_flops.py /path/to/config --shape 512 512
 
 For technical problem, please create an issue.
 
-If you have any private question, please feel free to contact me via gmh20@mails.tsinghua.edu.cn.
+If you have any private question, please feel free to contact me via X1308567250@gmail.com.
 
 
 ## Acknowledgment
 
-Our implementation is mainly based on [mmsegmentaion](https://github.com/open-mmlab/mmsegmentation/tree/v0.24.1), [Segformer](https://github.com/NVlabs/SegFormer) and [Enjoy-Hamburger](https://github.com/Gsunshine/Enjoy-Hamburger). Thanks for their authors.
+Our implementation is mainly based on [mmsegmentaion](https://github.com/open-mmlab/mmsegmentation/tree/v0.24.1) [Unet-mamba](https://github.com/ziyangwang007/Mamba-UNet.git) [SegNext](https://github.com/Visual-Attention-Network/SegNeXt.git). Thanks for their authors.
 
 ## LICENSE
 
