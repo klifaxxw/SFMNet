@@ -11,7 +11,6 @@ model = dict(
     type='EncoderDecoder',
     pretrained=None,
     backbone=dict(
-        type='',
         patch_size=4,
         in_chans=3,
         depths=[2, 2, 9, 2],
@@ -30,7 +29,6 @@ model = dict(
             checkpoint='/home/dell/x/model/bdfomer/weights/vmamba_tiny_e292.pth'),
         ),
     decode_head=dict(
-        type='',
         depths=[2, 2, 9, 2],
         dims=[96, 192, 384, 768],
         d_state=16,
@@ -46,7 +44,6 @@ model = dict(
         channels=256,
         loss_decode=dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
-    
     # model training and testing settings
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))

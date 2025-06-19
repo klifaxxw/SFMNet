@@ -32,11 +32,11 @@ def parse_args():
     # 2  'local_configs/cswin/cross_swin_tiny_patch4_window7_512x512_160k_soild.py'
     parser.add_argument('--config', default='local_configs/cswin/cross_swin_tiny_patch4_window7_512x512_160k_soild.py', help='train config file path')
     # Umamba_tiny
-    parser.add_argument('--work-dir', default="runs/cross_swin_tiny", help='the dir to save logs and models')
+    parser.add_argument('--work-dir', default="runs/cross_swin_tiny_test", help='the dir to save logs and models')
     parser.add_argument(
-        '--load-from', default="cross_swin/iter_100010.pth", help='the checkpoint file to load weights from')
+        '--load-from', default="weights/vmamba_tiny_e292.pth", help='the checkpoint file to load weights from')
     parser.add_argument(
-        '--resume-from', default="cross_swin_tiny/iter_70007.pth",  help='the checkpoint file to resume from')
+        '--resume-from', default=None,  help='the checkpoint file to resume from') 
     parser.add_argument(
         '--no-validate',
         action='store_true',
