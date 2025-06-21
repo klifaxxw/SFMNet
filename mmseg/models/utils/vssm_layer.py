@@ -18,6 +18,8 @@ DropPath.__repr__ = lambda self: f"timm.DropPath({self.drop_prob})"
 
 from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_scan_ref
 
+### 2d 泰勒展开
+
 
 def flops_selective_scan_ref(B=1, L=256, D=768, N=16, with_D=True, with_Z=False, with_Group=True, with_complex=False):
     """
