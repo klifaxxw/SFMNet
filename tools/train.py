@@ -30,9 +30,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
     # 1 local_configs/Umamba/unet_mamba_tiny_soild_160k_adwn.py
     # 2  'local_configs/cswin/cross_swin_tiny_patch4_window7_512x512_160k_soild.py'
-    parser.add_argument('--config', default='local_configs/cswin/cross_swin_tiny_patch4_window7_512x512_160k_soild.py', help='train config file path')
+    parser.add_argument('--config', default='local_configs/CTmamba/ctmamba_tiny_soild_160k_adwn.py', help='train config file path')
     # Umamba_tiny
-    parser.add_argument('--work-dir', default="runs/cross_swin_tiny_test", help='the dir to save logs and models')
+    parser.add_argument('--work-dir', default="runs/lighthead_mamba", help='the dir to save logs and models')
     parser.add_argument(
         '--load-from', default="weights/vmamba_tiny_e292.pth", help='the checkpoint file to load weights from')
     parser.add_argument(

@@ -124,10 +124,10 @@ class MambaBackbone(BaseModule):
 
     def forward(self, x):
         """前向传播"""
-        x = self.patch_embed(x)  # B C H W -> B H W C
+        #x = self.patch_embed(x)  # B C H W -> B H W C
         ### position embeding
-        if self.ape:
-            pass
+        # if self.ape:
+        #     pass
         outs = []
         for i, layer in enumerate(self.layers):
             reshape = getattr(self, f"reshape{i + 1}")
