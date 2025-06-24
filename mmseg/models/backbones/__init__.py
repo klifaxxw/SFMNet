@@ -24,6 +24,7 @@ from .mscan import MSCAN
 from .MambaUE import MambaUE
 from .crsct import CCrossTransformer
 from .swin_transformer import SwinTransformer
+from .mamba import MambaBackbone
 
 __all__ = [
     'ResNet', 'ResNetV1c', 'ResNetV1d', 'ResNeXt', 'HRNet', 'FastSCNN',
@@ -31,5 +32,5 @@ __all__ = [
     'VisionTransformer', 'MixVisionTransformer',
     'BiSeNetV1', 'BiSeNetV2', 'ICNet', 'TIMMBackbone', 'ERFNet', 'PCPVT',
     'SVT', 'STDCNet', 'STDCContextPathNet', 'BEiT', 'MAE',
-    'MSCAN', "MambaUE", "CCrossTransformer", 'SwinTransformer'
+    'MSCAN', "MambaUE", "CCrossTransformer", 'SwinTransformer', 'MambaBackbone'
 ]

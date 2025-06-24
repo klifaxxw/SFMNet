@@ -15,6 +15,7 @@ class CrsCmt(BaseModule):
     """
     MMSegmentation兼容的Mamba主干网络
     """
+
     def __init__(self,
                  patch_size=4,
                  in_chans=3,
@@ -42,6 +43,7 @@ class CrsCmt(BaseModule):
         self.out_indices = out_indices
         self.ape = ape
         # 图像到patch的转换
+        
         self.patch_embed = PatchEmbed2D(
             patch_size=patch_size,
             in_chans=in_chans,
@@ -52,6 +54,7 @@ class CrsCmt(BaseModule):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
 
 
+
     def _init_weights(self, m):
         pass
 
@@ -59,4 +62,4 @@ class CrsCmt(BaseModule):
         pass
 
     def forward(self, x):
-       pass
+        pass

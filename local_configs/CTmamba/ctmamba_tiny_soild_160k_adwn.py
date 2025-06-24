@@ -7,10 +7,12 @@ _base_ = [
 
 # model settings
 norm_cfg = dict(type='SyncBN', requires_grad=True)
+ham_norm_cfg = dict(type='GN', num_groups=32, requires_grad=True)
 model = dict(
     type='EncoderDecoder',
     pretrained=None,
     backbone=dict(
+        type='MambaBackbone',
         patch_size=4,
         in_chans=3,
         depths=[2, 2, 9, 2],
@@ -27,23 +29,19 @@ model = dict(
         init_cfg=dict(
             type='Pretrained',
             checkpoint='/home/dell/x/model/bdfomer/weights/vmamba_tiny_e292.pth'),
-        ),
+    ),
     decode_head=dict(
-        depths=[2, 2, 9, 2],
-        dims=[96, 192, 384, 768],
-        d_state=16,
-        drop_rate=0.,
-        attn_drop_rate=0.,
-        drop_path_rate=0.1,
-        use_checkpoint=False,
+        type='LightHamHead',
+        in_channels=[192, 384, 768],
+        in_index=[1, 2, 3],
+        channels=256,
+        ham_channels=256,
         dropout_ratio=0.1,
         num_classes=2,
+        norm_cfg=ham_norm_cfg,
         align_corners=False,
-        in_channels=[96, 192, 384, 768],
-        in_index=[0, 1, 2, 3],
-        channels=256,
-        loss_decode=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
+        loss_decode=dict(type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
+
     # model training and testing settings
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
@@ -55,8 +53,8 @@ runner = dict(type='IterBasedRunner', max_iters=170000)
 # optimizer
 optimizer = dict(_delete_=True, type='AdamW', lr=0.00006, betas=(0.9, 0.999), weight_decay=0.01,
                  paramwise_cfg=dict(custom_keys={'norm': dict(decay_mult=0.),
-                                                'A_log':dict(decay_mult=0.0),  # 禁用 A_log 的权重衰减
-                                                'D': dict(decay_mult=0.0),  # 禁用 D 的权重衰减
+                                                 'A_log': dict(decay_mult=0.0),  # 禁用 A_log 的权重衰减
+                                                 'D': dict(decay_mult=0.0),  # 禁用 D 的权重衰减
                                                  }))
 lr_config = dict(_delete_=True, policy='poly',
                  warmup='linear',
