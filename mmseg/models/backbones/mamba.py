@@ -84,7 +84,7 @@ class MambaBackbone(BaseModule):
             self.layers.append(layer)
             setattr(self, f"reshape{i_layer + 1}", Reshape())
             setattr(self, f"downsample{i_layer + 1}",
-                    PatchMerging2D if (i_layer < self.num_layers - 1) else nn.Identity)
+                    PatchMerging2D(int(dims[0] * 2 ** i_layer)) if (i_layer < self.num_layers - 1) else nn.Identity())
             setattr(self, f"norm{i_layer + 1}",
                     nn.LayerNorm(int(dims[0] * 2 ** i_layer)))
         self.reshape5 = Reshape()
@@ -140,4 +140,4 @@ class MambaBackbone(BaseModule):
             x = layer(x)
             x = norm(x)
             outs.append(reshape(x))
-        return tuple(outs)
+        return outs
