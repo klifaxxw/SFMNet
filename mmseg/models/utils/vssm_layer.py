@@ -13,6 +13,7 @@ import torch.utils.checkpoint as checkpoint
 from einops import rearrange, repeat
 from timm.models.layers import DropPath, trunc_normal_
 from fvcore.nn import FlopCountAnalysis, flop_count_str, flop_count, parameter_count
+from mmcv.cnn import build_norm_layer, ConvModule
 
 DropPath.__repr__ = lambda self: f"timm.DropPath({self.drop_prob})"
 
@@ -261,6 +262,57 @@ class FinalPatchExpand_X4(nn.Module):
         return x
 
 
+# 变为加性注意力机制，因为仅简单相加，无法准确衡量x, x_5, x_9, x_13的相似性，如果使用dot-product, 
+# 计算复杂度变为了O(n²)，因此在浅层使用加性注意力机制
+class SpatialMExtend(nn.Module):
+    def __init__(self, dim, norm_cfg=dict(type='SyncBN', requires_grad=True)):
+        super(SpatialMExtend, self).__init__()
+        edim = dim * 2
+        # self.convert = nn.Conv2d(
+        #     in_channels=dim,
+        #     out_channels=dim,
+        #     kernel_size=1,
+        #     padding=0,
+        # )
+        self.gather = nn.Conv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=3,
+            padding=1,
+            groups=dim,
+        )
+        self.up = nn.Conv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=1,
+            padding=0,
+        )
+        self.bn1 = build_norm_layer(norm_cfg, dim)[1]
+        self.act = nn.SiLU()
+        self.extendline_1 = nn.Conv2d(dim, dim, (1, 1), padding=(0, 0), groups=dim)
+        self.extendline_5 = nn.Conv2d(dim, dim, (5, 1), padding=(2, 0), groups=dim)
+        self.extendline_9 = nn.Conv2d(dim, dim, (9, 1), padding=(4, 0), groups=dim)
+        self.extendline_13 = nn.Conv2d(dim, dim, (13, 1), padding=(6, 0), groups=dim)
+        self.down = nn.Conv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=1,
+            padding=0,
+        )
+        self.bn2 = build_norm_layer(norm_cfg, dim)[1]
+    
+    def forward(self, x):
+        # x = self.convert(x)
+        x = self.gather(x)
+        x = self.act(self.bn1(self.up(x)))
+        x1 = self.extendline_1(x)
+        x2 = self.extendline_5(x)
+        x3 = self.extendline_9(x)
+        x4 = self.extendline_13(x)
+        x = x1 + x2 + x3 + x4
+        x = self.bn2(self.down(x))
+        return x
+
 class SS2D(nn.Module):
     def __init__(
             self,
@@ -303,6 +355,9 @@ class SS2D(nn.Module):
             padding=(d_conv - 1) // 2,
 
         )
+        # self.extend = SpatialMExtend(self.d_inner)
+        self.extends = nn.ModuleList([SpatialMExtend(self.d_inner) for _ in range(4)])
+
         self.act = nn.SiLU()
 
         self.x_proj = (
@@ -402,10 +457,26 @@ class SS2D(nn.Module):
         B, C, H, W = x.shape
         L = H * W
         K = 4
-
         x_hwwh = torch.stack([x.view(B, -1, L), torch.transpose(x, dim0=2, dim1=3).contiguous().view(B, -1, L)],
                              dim=1).view(B, 2, -1, L)
+        
+        x_hwwh = x_hwwh.view(B, K // 2, C, H, W)
+        out = torch.empty_like(x_hwwh)
+        for i in range(K // 2):
+            out[:, i] = self.extends[i](x_hwwh[:,i])
+        x_hwwh = out
+        # xs = self.extend(xs)
+        x_hwwh = x_hwwh.view(B, K // 2, C, L)
+
         xs = torch.cat([x_hwwh, torch.flip(x_hwwh, dims=[-1])], dim=1)  # (b, k, d, l)
+
+        # xs = xs.view(B, K, C, H, W)
+        # out = torch.empty_like(xs)
+        # for i in range(K):
+        #     out[:, i] = self.extends[i](xs[:,i])
+        # xs = out
+        # # xs = self.extend(xs)
+        # xs = xs.view(B, K, C, L)
 
         x_dbl = torch.einsum("b k d l, k c d -> b k c l", xs.view(B, K, -1, L), self.x_proj_weight.to(device))
         # x_dbl = x_dbl + self.x_proj_bias.view(1, K, -1, 1)
@@ -527,7 +598,6 @@ class SS2D(nn.Module):
         y = out_y[:, 0].float() + inv_y[:, 0].float() + wh_y.float() + invwh_y.float()
         y = torch.transpose(y, dim0=1, dim1=2).contiguous().view(B, H, W, -1)
         y = self.out_norm(y).to(x.dtype)
-
         return y
 
     def forward(self, x: torch.Tensor, **kwargs):
