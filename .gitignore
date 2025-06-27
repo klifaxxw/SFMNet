@@ -113,6 +113,9 @@ data
 *.pkl
 *.pkl.json
 *.log.json
+*.jpg
+*.png
+*.jpeg
 work_dirs/
 mmseg/.mim
 
