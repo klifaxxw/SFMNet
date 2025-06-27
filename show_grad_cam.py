@@ -63,12 +63,12 @@ class SemanticSegmentationTarget:
 
 if __name__ == '__main__':
     # 配置文件和模型权重文件
-    config = r"Umamba_tiny/unet_mamba_tiny_soild_160k_adwn.py"
-    model_state_file = r"Umamba_tiny/best_mIoU_iter_152000.pth"
+    config = r"runs/upernet_mamba/mamba_upernet_tiny_soild_160k_adwn.py"
+    model_state_file = r"runs/upernet_mamba/best_mIoU_iter_120000.pth"
     model = init_segmentor(config, model_state_file)
 
     # 输入图像路径
-    img_path = r"/home/dell/x/model/unet/VOCdevkit/VOC2007/JPEGImages/33.png"
+    img_path = r"/home/dell/x/model/unet/VOCdevkit/VOC2007/JPEGImages/148.png"
     category = 1
     basename = os.path.basename(img_path)
 
@@ -84,8 +84,8 @@ if __name__ == '__main__':
         ["model.model.backbone.reshape2", model.model.backbone.reshape2],
         ["model.model.backbone.reshape3", model.model.backbone.reshape3],
         ["model.model.backbone.reshape4", model.model.backbone.reshape4],
-        ["model.model.backbone.reshape5", model.model.backbone.reshape5],
-        ["model.model.decode_head.reshape_final", model.model.decode_head.reshape_final],
+        # ["model.model.backbone.reshape5", model.model.backbone.reshape5],
+       ["model.model.decode_head.fpn_bottleneck", model.model.decode_head.fpn_bottleneck],
     ]
 
     # 加载输入图像

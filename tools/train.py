@@ -32,7 +32,7 @@ def parse_args():
     # 2  'local_configs/cswin/cross_swin_tiny_patch4_window7_512x512_160k_soild.py'
     parser.add_argument('--config', default='local_configs/CTmamba/mixer_mamba_upernet_tiny_soild_160k_adwn.py', help='train config file path')
     # Umamba_tiny
-    parser.add_argument('--work-dir', default="runs/upernet_spatialExtend_mamba", help='the dir to save logs and models')
+    parser.add_argument('--work-dir', default="runs/upernet_spatialExtend_mamba_first", help='the dir to save logs and models')
     parser.add_argument(
         '--load-from', default="weights/vmamba_tiny_e292.pth", help='the checkpoint file to load weights from')
     parser.add_argument(

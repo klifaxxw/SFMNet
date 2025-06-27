@@ -274,6 +274,12 @@ class SpatialMExtend(nn.Module):
         #     kernel_size=1,
         #     padding=0,
         # )
+        self.convert = nn.Conv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=1,
+            padding=0,
+        )
         self.gather = nn.Conv2d(
             in_channels=dim,
             out_channels=dim,
@@ -281,15 +287,10 @@ class SpatialMExtend(nn.Module):
             padding=1,
             groups=dim,
         )
-        self.up = nn.Conv2d(
-            in_channels=dim,
-            out_channels=dim,
-            kernel_size=1,
-            padding=0,
-        )
         self.bn1 = build_norm_layer(norm_cfg, dim)[1]
         self.act = nn.SiLU()
-        self.extendline_1 = nn.Conv2d(dim, dim, (1, 1), padding=(0, 0), groups=dim)
+        #self.conv1x1 = nn.Conv2d(dim, dim, (1, 1))
+        self.conv3x3 = nn.Conv2d(dim, dim, (3, 3), padding=(1, 1), groups=dim)
         self.extendline_5 = nn.Conv2d(dim, dim, (5, 1), padding=(2, 0), groups=dim)
         self.extendline_9 = nn.Conv2d(dim, dim, (9, 1), padding=(4, 0), groups=dim)
         self.extendline_13 = nn.Conv2d(dim, dim, (13, 1), padding=(6, 0), groups=dim)
@@ -300,17 +301,21 @@ class SpatialMExtend(nn.Module):
             padding=0,
         )
         self.bn2 = build_norm_layer(norm_cfg, dim)[1]
+        self.act1 = nn.SiLU()
     
     def forward(self, x):
-        # x = self.convert(x)
+        shortcut = x
+        x = self.convert(x)
         x = self.gather(x)
-        x = self.act(self.bn1(self.up(x)))
-        x1 = self.extendline_1(x)
+        x = self.act(self.bn1(x))
+        x1 = self.conv3x3(x)
         x2 = self.extendline_5(x)
         x3 = self.extendline_9(x)
         x4 = self.extendline_13(x)
         x = x1 + x2 + x3 + x4
         x = self.bn2(self.down(x))
+        x = x + shortcut
+        x = self.act1(x)
         return x
 
 class SS2D(nn.Module):
@@ -356,7 +361,7 @@ class SS2D(nn.Module):
 
         )
         # self.extend = SpatialMExtend(self.d_inner)
-        self.extends = nn.ModuleList([SpatialMExtend(self.d_inner) for _ in range(4)])
+        self.extends = nn.ModuleList([SpatialMExtend(self.d_inner) for _ in range(2)])
 
         self.act = nn.SiLU()
 
@@ -500,15 +505,14 @@ class SS2D(nn.Module):
             return_last_state=False,
         ).view(B, K, -1, L)
         assert out_y.dtype == torch.float
-
         inv_y = torch.flip(out_y[:, 2:4], dims=[-1]).view(B, 2, -1, L)
         wh_y = torch.transpose(out_y[:, 1].view(B, -1, W, H), dim0=2, dim1=3).contiguous().view(B, -1, L)
         invwh_y = torch.transpose(inv_y[:, 1].view(B, -1, W, H), dim0=2, dim1=3).contiguous().view(B, -1, L)
         y = out_y[:, 0] + inv_y[:, 0] + wh_y + invwh_y
         y = torch.transpose(y, dim0=1, dim1=2).contiguous().view(B, H, W, -1)
         y = self.out_norm(y).to(x.dtype)
-
         return y
+
 
     def forward_corev0_seq(self, x: torch.Tensor):
         self.selective_scan = selective_scan_fn
