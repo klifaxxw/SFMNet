@@ -34,9 +34,9 @@ def parse_args():
     # Umamba_tiny
     parser.add_argument('--work-dir', default="runs/upernet_spatialExtend_mamba_first", help='the dir to save logs and models')
     parser.add_argument(
-        '--load-from', default="weights/vmamba_tiny_e292.pth", help='the checkpoint file to load weights from')
+        '--load-from', default=None, help='the checkpoint file to load weights from')
     parser.add_argument(
-        '--resume-from', default=None,  help='the checkpoint file to resume from') 
+        '--resume-from', default="runs/upernet_spatialExtend_mamba_first/iter_100000.pth",  help='the checkpoint file to resume from') 
     parser.add_argument(
         '--no-validate',
         action='store_true',
