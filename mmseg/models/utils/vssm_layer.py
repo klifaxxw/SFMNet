@@ -361,7 +361,7 @@ class SS2D(nn.Module):
 
         )
         # self.extend = SpatialMExtend(self.d_inner)
-        self.extends = nn.ModuleList([SpatialMExtend(self.d_inner) for _ in range(2)])
+        # self.extends = nn.ModuleList([SpatialMExtend(self.d_inner) for _ in range(2)])
 
         self.act = nn.SiLU()
 
@@ -465,13 +465,13 @@ class SS2D(nn.Module):
         x_hwwh = torch.stack([x.view(B, -1, L), torch.transpose(x, dim0=2, dim1=3).contiguous().view(B, -1, L)],
                              dim=1).view(B, 2, -1, L)
         
-        x_hwwh = x_hwwh.view(B, K // 2, C, H, W)
-        out = torch.empty_like(x_hwwh)
-        for i in range(K // 2):
-            out[:, i] = self.extends[i](x_hwwh[:,i])
-        x_hwwh = out
-        # xs = self.extend(xs)
-        x_hwwh = x_hwwh.view(B, K // 2, C, L)
+        # x_hwwh = x_hwwh.view(B, K // 2, C, H, W)
+        # out = torch.empty_like(x_hwwh)
+        # for i in range(K // 2):
+        #     out[:, i] = self.extends[i](x_hwwh[:,i])
+        # x_hwwh = out
+        # # xs = self.extend(xs)
+        # x_hwwh = x_hwwh.view(B, K // 2, C, L)
 
         xs = torch.cat([x_hwwh, torch.flip(x_hwwh, dims=[-1])], dim=1)  # (b, k, d, l)
 

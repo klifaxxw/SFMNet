@@ -1,0 +1,240 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import torch
+import torch.nn as nn
+import math
+import copy
+
+from timm.models.layers import  trunc_normal_
+from mmcv.runner import BaseModule
+from ..builder import BACKBONES
+from mmseg.utils.logger import get_root_logger
+from ..utils.crss_layer import *
+
+
+class Reshape(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # self.sizes = sizes
+
+    def forward(self, x):
+        y = x.permute((0, 3, 1, 2))
+        return y
+
+def autopad(kernel_size):
+    if isinstance(kernel_size, int):
+        return kernel_size // 2
+    elif isinstance(kernel_size, tuple):
+        return tuple(k // 2 for k in kernel_size)
+    else:
+        raise TypeError('kernel_size must be int or tuple')
+
+class depthwise(nn.Module):
+    def __init__(embed_dim, kernel_size, norm_cfg=dict(type='LN', requires_grad=True))
+        super(depthwise, self).__init__()
+        self.conv1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=(1, kernel_size), padding=autopad((1, kernel_size)), groups=embed_dim)
+        self.conv2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=(kernel_size, 1), padding=autopad((kernel_size, 1)), groups=embed_dim)
+        self.bn = build_norm_layer(norm_cfg, embed_dim)[1]
+        self.act = nn.GELU()
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = x.permute(0, 2, 3, 1)  # NCHW -> NHWC
+        x = self.bn(x)
+        x = x.permute(0, 3, 1, 2).contiguous()  # NHWC -> NCHW
+        x = self.act(x) # 考虑一下激活函数是否使用，实验证明
+        return x
+        
+
+class FEModule(nn.Module):
+    def __init__(self, embed_dim, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
+        super(FEModule, self).__init__()
+        assert kernels is not None and isinstance(kernels, list), "kernels must be a list of integers"
+        self.num_conv = len(kernels)
+        self.dc = nn.ModuleList()
+        for i, kernel_size in enumerate(kernels):
+            self.dc.append(depthwise(embed_dim, kernel_size, norm_cfg))
+    
+    def forward(self, x):
+        outs = []
+        for layer in self.dc:
+            out = layer(x)
+            outs.append(out)
+        return outs
+
+
+
+class AttentionModule(nn.Module):
+    def __init__(self, embed_dim, n_heads, n_points=4, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
+        super(AttentionModule, self).__init__()
+        self.n_levels = len(kernels)
+        self.extrac_features = FEModule(embed_dim, kernels=kernels, norm_cfg=norm_cfg)
+        self.deformAttn = MSDeformAttn(embed_dim, self.n_levels, n_heads, n_points)
+
+
+    @staticmethod
+    def get_valid_ratio(self, mask):
+    _, H, W = mask.shape
+    valid_H = torch.sum(~mask[:, :, 0], 1)
+    valid_W = torch.sum(~mask[:, 0, :], 1)
+    valid_ratio_h = valid_H.float() / H
+    valid_ratio_w = valid_W.float() / W
+    # bs, 2
+    valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
+    return valid_ratio
+
+
+    @staticmethod
+    def get_reference_points(spatial_shape, valid_ratio, device):
+
+        reference_points = []
+        H_, W_ = spatial_shape
+        ref_y, ref_x = torch.meshgrid(torch.linspace(0.5, H_ - 0.5, H_, dtype=torch.float32, device=device),
+                                        torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device))
+        # (1, h * w) / bs,
+        ref_y = ref_y.reshape(-1)[None] / (valid_ratio[:, None, 1] * H_)
+        ref_x = ref_x.reshape(-1)[None] / (valid_ratio[:, None, 0] * W_)
+        # bs, h_ * w_, 2
+        reference_points = torch.stack((ref_x, ref_y), -1)
+        # (bs, h_ * w_, 2) * (bs, 1, 2)
+        reference_points = reference_points[:, :, None] * valid_ratio[:, None]
+        # (bs, h_ * w_, 2)
+        return reference_points
+
+    def forward(self, x, pos_enc):
+        # bs, c, h, w = x.shape
+        shortcut = x
+        mask = torch.zeros_like(x[:, 0, :, :])
+        # bs, 2 当使用数据增强时，考虑有效mask
+        valid_ratio = self.get_valid_ratio(mask)
+        mul_features = self.extrac_features(x)
+        
+
+        return x
+
+        
+
+
+class MixBlock(nn.Module): 
+    def __init__(self, in_channels, out_channels, embed_dim, num_heads, num_points=4, mlp_ratio, drop_path=0, is_scale=False, layer_scale_init_values=1e-6, norm_layer=LayerNorm2d):
+        super(MixBlock, self).__init__()
+        self.embed_dim = embed_dim
+        self.cpe1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
+        self.norm1 = norm_layer(embed_dim)
+        self.attn = None
+        self.cpe2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
+        self.norm2 = norm_layer(embed_dim)
+        self.mlp = FFN(embed_dim, int(embed_dim * mlp_ratio))
+        self.drop_path = DropPath(drop_path) if drop_path > 0 else nn.Identity()
+        if is_scale:
+            self.layer_scale1 = LayerScale(embed_dim, init_value=layer_init_values)
+            self.layer_scale2 = LayerScale(embed_dim, init_value=layer_init_values)
+        else:
+            self.layer_scale1 = nn.Identity()
+            self.layer_scale2 = nn.Identity()
+
+    def forward(self, x, pos_enc):
+        x = x + self.cpe1(x)
+        x = x + self.drop_path(self.layer_scale1(self.attn(self.norm1(x), pos_enc)))
+        x = x + self.cpe2(x)
+        x = x + self.drop_path(self.layer_scale2(self.mlp(self.norm2(x))))
+        return x
+
+
+class MixLayer(nn.Module):
+    def __init__(self, in_channels, out_channels, embed_dim, depths, num_heads, downsample=None, norm_cfg=None):
+        super(MixLayer, self).__init__()
+        self.rope = RoPE(embed_dim, num_heads)
+
+
+    def forward(self, x):
+        pos_enc = self.rope((x.shape[2:]))
+        return x
+
+
+@BACKBONES.register_module()
+class mixer(BaseModule):
+    """
+    MMSegmentation兼容的Mamba主干网络
+    """
+    def __init__(self,
+                 patch_size=4,
+                 in_chans=3,
+                 depths=[2, 2, 9, 2],
+                 dims=[96, 192, 384, 768],
+                 d_state=16,
+                 drop_rate=0.,
+                 attn_drop_rate=0.,
+                 drop_path_rate=0.1,
+                 norm_layer=nn.LayerNorm,
+                 patch_norm=True,
+                 norm_cfg=None,
+                 use_checkpoint=False,
+                 out_indices=(0, 1, 2, 3),
+                 pretrained=None,
+                 ape=False,
+                 init_cfg=None,
+                 **kwargs):
+        super().__init__(init_cfg=init_cfg)
+        self.num_layers = len(depths)
+        if isinstance(dims, int):
+            dims = [int(dims * 2 ** i_layer) for i_layer in range(self.num_layers)]
+        self.embed_dim = dims[0]
+        self.num_features = dims[-1]
+        self.dims = dims
+        self.out_indices = out_indices
+        self.ape = ape
+        # 图像到patch的转换
+        self.patch_embed = PatchEmbed2D(
+            patch_size=patch_size,
+            in_chans=in_chans,
+            embed_dim=self.embed_dim,
+            norm_layer=norm_layer if patch_norm else None
+        )
+        # 提取特征
+        self.stem = StemConv(in_channels, dims[0], norm_cfg)
+        self.layers = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            layer = None
+            self.layers.append(layer)
+        # stochastic depth
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
+        ### 使用多个特征层 def SPPF，提取丰富语义特征
+        # 初始化权重
+        self.apply(self._init_weights)
+
+
+    def _init_weights(self, m):
+        if hasattr(m, 'bias') and getattr(m.bias, '_no_reinit', False):
+            return
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        
+
+    def init_weights(self):
+        logger = get_root_logger()
+        """自定义初始化权重"""
+        logger.info("init_weights is called.")
+        if self.init_cfg is not None:
+            checkpoint = torch.load(self.init_cfg['checkpoint'], map_location='cpu')
+            # 检查是否包含 'model' 键
+            if 'model' in checkpoint:
+                logger.info("Checkpoint contains 'model'. Extracting state_dict...")
+                state_dict = checkpoint['model']
+            else:
+                logger.info("Checkpoint does not contain 'model'. Loading directly...")
+                state_dict = checkpoint
+            self.load_state_dict(state_dict, strict=False)
+        else:
+            logger.info("No init_cfg provided. Using default initialization.")
+
+    def forward(self, x):
+        pass
