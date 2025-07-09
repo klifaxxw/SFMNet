@@ -61,6 +61,11 @@ class MSDeformAttn(nn.Module):
         self.value_proj = nn.Linear(d_model, d_model)
         self.output_proj = nn.Linear(d_model, d_model)
         self._reset_parameters()
+        # not init again in network
+        self.sampling_offsets._no_reinit = True
+        self.attention_weights._no_reinit = True
+        self.value_proj._no_reinit = True
+        self.output_proj._no_reinit = True
 
     def _reset_parameters(self):
         constant_(self.sampling_offsets.weight.data, 0.)

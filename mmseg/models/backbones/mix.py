@@ -32,8 +32,9 @@ def autopad(kernel_size):
     else:
         raise TypeError('kernel_size must be int or tuple')
 
+
 class depthwise(nn.Module):
-    def __init__(embed_dim, kernel_size, norm_cfg=dict(type='LN', requires_grad=True))
+    def __init__(self, embed_dim, kernel_size, norm_cfg=dict(type='LN', requires_grad=True)):
         super(depthwise, self).__init__()
         self.conv1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=(1, kernel_size), padding=autopad((1, kernel_size)), groups=embed_dim)
         self.conv2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=(kernel_size, 1), padding=autopad((kernel_size, 1)), groups=embed_dim)
@@ -46,7 +47,7 @@ class depthwise(nn.Module):
         x = x.permute(0, 2, 3, 1)  # NCHW -> NHWC
         x = self.bn(x)
         x = x.permute(0, 3, 1, 2).contiguous()  # NHWC -> NCHW
-        x = self.act(x) # 考虑一下激活函数是否使用，实验证明
+        x = self.act(x)
         return x
         
 
@@ -67,15 +68,6 @@ class FEModule(nn.Module):
             outs.append(out)
         return outs
 
-def rotate_every_two(x):
-    x1 = x[:, :, :, :, ::2]
-    x2 = x[:, :, :, :, 1::2]
-    x = torch.stack([-x2, x1], dim=-1)
-    return x.flatten(-2)
-
-def theta_shift(x, sin, cos):
-    return (x * cos) + (rotate_every_two(x) * sin)
-
 
 class AttentionModule(nn.Module):
     def __init__(self, embed_dim, n_heads, n_points=4, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
@@ -83,13 +75,10 @@ class AttentionModule(nn.Module):
         self.num_features = len(kernels)
         self.extract_features = FEModule(embed_dim, kernels=kernels, norm_cfg=norm_cfg)
         self.deformAttn = MSDeformAttn(embed_dim, self.num_features, n_heads, n_points)
-        self.head_dim = self.embed_dim // n_heads
-        self.scale = self.head_dim ** -0.5
-        self.level_embed = nn.Parameter(torch.Tensor(num_features, embed_dim))
+        self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
         self.fuse = nn.Linear(embed_dim * self.num_features, embed_dim)
 
 
-    @staticmethod
     def get_valid_ratio(self, mask):
         _, H, W = mask.shape
         valid_H = torch.sum(~mask[:, :, 0], 1)
@@ -101,8 +90,8 @@ class AttentionModule(nn.Module):
         return valid_ratio
 
 
-    @staticmethod
-    def get_reference_points(spatial_shape, valid_ratio, device):
+
+    def get_reference_points(self, spatial_shape, valid_ratio, device):
         H_, W_ = spatial_shape
         ref_y, ref_x = torch.meshgrid(torch.linspace(0.5, H_ - 0.5, H_, dtype=torch.float32, device=device),
                                         torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device))
@@ -113,8 +102,6 @@ class AttentionModule(nn.Module):
         reference_points = torch.stack((ref_x, ref_y), -1)
         # (bs, h_ * w_, 2) * (bs, 1, 2)
         reference_points = reference_points[:, :] * valid_ratio[:, None]
-        
-
         # (bs, h_ * w_, 2)
         return reference_points
     
@@ -151,12 +138,12 @@ class AttentionModule(nn.Module):
 
 
 class MixAttention(nn.Module):
-    def __init__(self, embed_dim, num_heads, num_points=4, ssm_ratio=1, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
+    def __init__(self, embed_dim, num_heads, num_points=4, ssm_ratio=1, global_mode=True, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
         super(MixAttention, self).__init__()
         self.embed_dim = embed_dim
-        # self.convert =  nn.Conv2d(embed_dim, embed_dim, 5, padding=2, groups=dim)
+        self.convert = nn.Conv2d(embed_dim, embed_dim, 5, padding=2, groups=embed_dim)
         self.attn = AttentionModule(embed_dim, num_heads, num_points, kernels=kernels, norm_cfg=norm_cfg)
-        self.norm = build_norm_layer(norm_cfg, embed_dim)[1]
+        # self.norm = build_norm_layer(norm_cfg, embed_dim)[1]
         self.ssm = VSSM(d_model=embed_dim, expansion_ratio=ssm_ratio)
         self.dwconv = nn.Sequential(
                 nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim),
@@ -166,12 +153,13 @@ class MixAttention(nn.Module):
         self.norm1 = build_norm_layer(norm_cfg, embed_dim)[1]
         self.proj = nn.Conv2d(embed_dim, embed_dim, kernel_size=1)
 
+    ### atten 运算
     def forward(self, x, pos_enc):
         b, c, h, w = x.shape
-        # x = self.convert(x) 
         shorcut = x
+        x = self.convert(x)
         x = self.attn(x, pos_enc)
-        x = self.norm(x)
+        # x = self.norm(x)
         v_r = x.view(b, h, w, c).permute(0, 3, 1, 2).contiguous()
         v = self.dwconv(v_r)
         v = self.act(v)
@@ -186,12 +174,12 @@ class MixAttention(nn.Module):
 
 
 class MixBlock(nn.Module): 
-    def __init__(self, embed_dim, num_heads, num_points=4, mlp_ratio=1.0, drop_path=0, kernels=[7, 11, 21], is_scale=False, layer_scale_init_values=1e-6, norm_cfg=None, ssm_ratio=1):
+    def __init__(self, embed_dim, num_heads, num_points=4, mlp_ratio=1.0, drop_path=0, global_mode=False, kernels=[7, 11, 21], is_scale=False, layer_init_values=1e-6, norm_cfg=None, ssm_ratio=1):
         super(MixBlock, self).__init__()
         self.embed_dim = embed_dim
         self.cpe1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
         self.norm1 = LayerNorm2d(embed_dim)
-        self.attn = MixAttention(embed_dim, num_heads, num_points, kernels=kernels, norm_cfg=norm_cfg)
+        self.attn = MixAttention(embed_dim, num_heads, num_points, ssm_ratio=ssm_ratio, global_mode=global_mode, kernels=kernels, norm_cfg=norm_cfg)
         self.cpe2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
         self.norm2 = LayerNorm2d(embed_dim)
         self.mlp = FFN(embed_dim, int(embed_dim * mlp_ratio))
@@ -231,9 +219,10 @@ class MixLayer(nn.Module):
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 kernels=kernels,
                 is_scale=is_scale,
-                layer_scale_init_values=layer_scale_init_values,
+                layer_init_values=layer_scale_init_values,
                 norm_cfg=norm_cfg,
-                ssm_ratio=ssm_ratio
+                ssm_ratio=ssm_ratio,
+                global_mode = False
             )
             self.blocks.append(block)
         if downsample is not None:
@@ -270,7 +259,6 @@ class mixer(BaseModule):
                  patch_norm= dict(type='SyncBN', requires_grad=True),
                  use_checkpoint=False,
                  out_indices=(0, 1, 2, 3),
-                 pretrained=None,
                  pos_func="relative", # positional encoding function: rope\relative\absolute
                  ssm_ratio=1,
                  scale=False,
@@ -302,22 +290,19 @@ class mixer(BaseModule):
                 layer_scale_init_values=layer_init_values,
                 downsample=None,
                 norm_cfg=norm_cfg,
-                use_checkpoint=use_checkpoint
+                use_checkpoint=use_checkpoint,
                 pos_func=pos_func,
                 ssm_ratio=ssm_ratio
             )
             layer_downsample = OverlapPatchEmbed(patch_size=3, stride=2, in_chans=dims[i_layer], embed_dim=dims[i_layer + 1], norm_cfg=patch_norm) if i_layer < self.num_layers - 1 else None
             norm = build_norm_layer(norm_cfg, dims[i_layer])[1]
-            setattr(self, f"patch_embed{i + 1}", layer_downsample)
-            setattr(self, f"norm{i + 1}", norm)
-            setattr(self, f"layer{i + 1}", layer)
-        
-
+            setattr(self, f"patch_embed{i_layer + 1}", layer_downsample)
+            setattr(self, f"norm{i_layer + 1}", norm)
+            setattr(self, f"layer{i_layer + 1}", layer)
         self.apply(self._init_weights)
 
-
     def _init_weights(self, m):
-        if hasattr(m, 'bias') and getattr(m.bias, '_no_reinit', False):
+        if getattr(m, "_no_reinit", False) or (hasattr(m, 'bias') and getattr(m.bias, '_no_reinit', False)):
             return
         if isinstance(m, nn.Conv2d):
             nn.init.trunc_normal_(m.weight, std=0.02)
@@ -355,9 +340,9 @@ class mixer(BaseModule):
     def forward(self, x):
         outs = []
         for i_layer in range(self.num_layers):
-            patch_embed = getattr(self, f"patch_embed{i}")
-            layer = getattr(self, f"layer{i + 1}")
-            norm = getattr(self, f"norm{i + 1}")
+            patch_embed = getattr(self, f"patch_embed{i_layer}")
+            layer = getattr(self, f"layer{i_layer + 1}")
+            norm = getattr(self, f"norm{i_layer + 1}")
             # bs, c, h, w
             x = patch_embed(x)
             x = layer(x)

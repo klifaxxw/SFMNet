@@ -59,7 +59,7 @@ def add_bootstrap_config(cfg: CN) -> None:
 def get_bootstrap_dataset_config() -> CN:
     _C = CN()
     _C.DATASET = ""
-    # ratio used to mix data loaders
+    # ratio used to mix.py data loaders
     _C.RATIO = 0.1
     # image loader
     _C.IMAGE_LOADER = CN(new_allowed=True)

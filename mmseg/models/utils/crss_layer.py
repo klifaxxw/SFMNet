@@ -201,56 +201,6 @@ class BFAttention(nn.Module):
         super(BFAttention, self).__init__()
 
 
-class AttentionModule(BaseModule):
-    def __init__(self, dim):
-        super().__init__()
-        self.conv0 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim)
-        self.conv0_1 = nn.Conv2d(dim, dim, (1, 7), padding=(0, 3), groups=dim)
-        self.conv0_2 = nn.Conv2d(dim, dim, (7, 1), padding=(3, 0), groups=dim)
-
-        self.conv1_1 = nn.Conv2d(dim, dim, (1, 11), padding=(0, 5), groups=dim)
-        self.conv1_2 = nn.Conv2d(dim, dim, (11, 1), padding=(5, 0), groups=dim)
-
-        self.conv2_1 = nn.Conv2d(
-            dim, dim, (1, 21), padding=(0, 10), groups=dim)
-        self.conv2_2 = nn.Conv2d(
-            dim, dim, (21, 1), padding=(10, 0), groups=dim)
-        self.conv3 = nn.Conv2d(dim, dim, 1)
-
-    def forward(self, x):
-        u = x.clone()
-        attn = self.conv0(x)
-
-        attn_0 = self.conv0_1(attn)
-        attn_0 = self.conv0_2(attn_0)
-
-        attn_1 = self.conv1_1(attn)
-        attn_1 = self.conv1_2(attn_1)
-
-        attn_2 = self.conv2_1(attn)
-        attn_2 = self.conv2_2(attn_2)
-        attn = attn + attn_0 + attn_1 + attn_2
-        attn = self.conv3(attn)
-        return attn * u
-
-
-class SpatialAttention(BaseModule):
-    def __init__(self, d_model):
-        super().__init__()
-        self.d_model = d_model
-        self.proj_1 = nn.Conv2d(d_model, d_model, 1)
-        self.activation = nn.GELU()
-        self.spatial_gating_unit = AttentionModule(d_model)
-        self.proj_2 = nn.Conv2d(d_model, d_model, 1)
-
-    def forward(self, x):
-        shorcut = x.clone()
-        x = self.proj_1(x)
-        x = self.activation(x)
-        x = self.spatial_gating_unit(x)
-        x = self.proj_2(x)
-        x = x + shorcut
-        return x
 
 class DWConv(nn.Module):
     def __init__(self, dim=768):
@@ -283,40 +233,6 @@ class ConvMlp(BaseModule):
         return x
 
 
-## from SegNext
-class ConvBlock(BaseModule):
-
-    def __init__(self,
-                 dim,
-                 mlp_ratio=4.,
-                 drop=0.,
-                 drop_path=0.,
-                 act_layer=nn.GELU,
-                 norm_cfg=dict(type='SyncBN', requires_grad=True)):
-        super().__init__()
-        self.norm1 = build_norm_layer(norm_cfg, dim)[1]
-        self.attn = SpatialAttention(dim)
-        self.drop_path = DropPath(
-            drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = build_norm_layer(norm_cfg, dim)[1]
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = ConvMlp(in_features=dim, hidden_features=mlp_hidden_dim,
-                           act_layer=act_layer, drop=drop)
-        layer_scale_init_value = 1e-2
-        self.layer_scale_1 = nn.Parameter(
-            layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-        self.layer_scale_2 = nn.Parameter(
-            layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-
-    def forward(self, x, H, W):
-        B, N, C = x.shape
-        x = x.permute(0, 2, 1).view(B, C, H, W)
-        x = x + self.drop_path(self.layer_scale_1.unsqueeze(-1).unsqueeze(-1)
-                               * self.attn(self.norm1(x)))
-        x = x + self.drop_path(self.layer_scale_2.unsqueeze(-1).unsqueeze(-1)
-                               * self.mlp(self.norm2(x)))
-        x = x.view(B, C, N).permute(0, 2, 1)
-        return x
 
 
 class OverlapPatchEmbed(BaseModule):
@@ -636,7 +552,6 @@ class VSSM(nn.Module):
     def dt_init(dt_rank, d_inner, dt_scale=1.0, dt_init="random", dt_min=0.001, dt_max=0.1, dt_init_floor=1e-4,
                 **factory_kwargs):
         dt_proj = nn.Linear(dt_rank, d_inner, bias=True, **factory_kwargs)
-
         # Initialize special dt projection to preserve variance at initialization
         dt_init_std = dt_rank ** -0.5 * dt_scale
         if dt_init == "constant":
@@ -645,7 +560,6 @@ class VSSM(nn.Module):
             nn.init.uniform_(dt_proj.weight, -dt_init_std, dt_init_std)
         else:
             raise NotImplementedError
-
         # Initialize dt bias so that F.softplus(dt_bias) is between dt_min and dt_max
         dt = torch.exp(
             torch.rand(d_inner, **factory_kwargs) * (math.log(dt_max) - math.log(dt_min))
@@ -656,7 +570,7 @@ class VSSM(nn.Module):
         with torch.no_grad():
             dt_proj.bias.copy_(inv_dt)
         # Our initialization would set all Linear.bias to zero, need to mark this one as _no_reinit
-        # dt_proj.bias._no_reinit = True
+        dt_proj.bias._no_reinit = True
 
         return dt_proj
 
@@ -744,4 +658,3 @@ class VSSM(nn.Module):
         if to_dtype:
             y = y.to(x.dtype)
         return y
-
