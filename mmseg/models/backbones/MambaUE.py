@@ -35,6 +35,7 @@ class MambaUE(BaseModule):
                  depths=[2, 2, 9, 2],
                  dims=[96, 192, 384, 768],
                  d_state=16,
+                 ssm_ratio=1,
                  drop_rate=0.,
                  attn_drop_rate=0.,
                  drop_path_rate=0.1,

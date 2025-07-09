@@ -12,6 +12,7 @@ from mmcv.runner import BaseModule
 from ..builder import BACKBONES
 from mmseg.utils.logger import get_root_logger
 from ..utils.crss_layer import *
+from mmseg.core import MSDeformAttn
 
 
 class Reshape(nn.Module):
@@ -54,6 +55,7 @@ class FEModule(nn.Module):
         super(FEModule, self).__init__()
         assert kernels is not None and isinstance(kernels, list), "kernels must be a list of integers"
         self.num_conv = len(kernels)
+       
         self.dc = nn.ModuleList()
         for i, kernel_size in enumerate(kernels):
             self.dc.append(depthwise(embed_dim, kernel_size, norm_cfg))
@@ -65,68 +67,133 @@ class FEModule(nn.Module):
             outs.append(out)
         return outs
 
+def rotate_every_two(x):
+    x1 = x[:, :, :, :, ::2]
+    x2 = x[:, :, :, :, 1::2]
+    x = torch.stack([-x2, x1], dim=-1)
+    return x.flatten(-2)
+
+def theta_shift(x, sin, cos):
+    return (x * cos) + (rotate_every_two(x) * sin)
 
 
 class AttentionModule(nn.Module):
     def __init__(self, embed_dim, n_heads, n_points=4, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
         super(AttentionModule, self).__init__()
-        self.n_levels = len(kernels)
-        self.extrac_features = FEModule(embed_dim, kernels=kernels, norm_cfg=norm_cfg)
-        self.deformAttn = MSDeformAttn(embed_dim, self.n_levels, n_heads, n_points)
+        self.num_features = len(kernels)
+        self.extract_features = FEModule(embed_dim, kernels=kernels, norm_cfg=norm_cfg)
+        self.deformAttn = MSDeformAttn(embed_dim, self.num_features, n_heads, n_points)
+        self.head_dim = self.embed_dim // n_heads
+        self.scale = self.head_dim ** -0.5
+        self.level_embed = nn.Parameter(torch.Tensor(num_features, embed_dim))
+        self.fuse = nn.Linear(embed_dim * self.num_features, embed_dim)
 
 
     @staticmethod
     def get_valid_ratio(self, mask):
-    _, H, W = mask.shape
-    valid_H = torch.sum(~mask[:, :, 0], 1)
-    valid_W = torch.sum(~mask[:, 0, :], 1)
-    valid_ratio_h = valid_H.float() / H
-    valid_ratio_w = valid_W.float() / W
-    # bs, 2
-    valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
-    return valid_ratio
+        _, H, W = mask.shape
+        valid_H = torch.sum(~mask[:, :, 0], 1)
+        valid_W = torch.sum(~mask[:, 0, :], 1)
+        valid_ratio_h = valid_H.float() / H
+        valid_ratio_w = valid_W.float() / W
+        # bs, 2
+        valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
+        return valid_ratio
 
 
     @staticmethod
     def get_reference_points(spatial_shape, valid_ratio, device):
-
-        reference_points = []
         H_, W_ = spatial_shape
         ref_y, ref_x = torch.meshgrid(torch.linspace(0.5, H_ - 0.5, H_, dtype=torch.float32, device=device),
                                         torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device))
-        # (1, h * w) / bs,
+        # (1, h * w) / bs, None,
         ref_y = ref_y.reshape(-1)[None] / (valid_ratio[:, None, 1] * H_)
         ref_x = ref_x.reshape(-1)[None] / (valid_ratio[:, None, 0] * W_)
         # bs, h_ * w_, 2
         reference_points = torch.stack((ref_x, ref_y), -1)
         # (bs, h_ * w_, 2) * (bs, 1, 2)
-        reference_points = reference_points[:, :, None] * valid_ratio[:, None]
+        reference_points = reference_points[:, :] * valid_ratio[:, None]
+        
+
         # (bs, h_ * w_, 2)
         return reference_points
+    
+    @staticmethod
+    def with_pos_embed(tensor, pos):
+        return tensor if pos is None else tensor + pos
 
     def forward(self, x, pos_enc):
-        # bs, c, h, w = x.shape
-        shortcut = x
+        bs, c, h, w = x.shape
+        spatial_shape = torch.tensor([[h, w]] * self.num_features, dtype=torch.float32, device=x.device)
         mask = torch.zeros_like(x[:, 0, :, :])
         # bs, 2 当使用数据增强时，考虑有效mask
         valid_ratio = self.get_valid_ratio(mask)
-        mul_features = self.extrac_features(x)
-        
+        # bs, h * w, 2
+        reference_points = self.get_reference_points(spatial_shape[0], valid_ratio, x.device).repeat(1, self.num_features, 2)
+        # mul local features
+        mul_features = self.extract_features(x)
+        poss = []
+          # bs, h * w, c
+        pos_enc = pos_enc.flatten(2).transpose(1, 2).contiguous()
+        for i in range(self.num_features):
+            l_pos = self.level_embed[i].view(1, 1, -1)
+            pos = pos_enc + l_pos
+            poss.append(pos)
+        # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
+        feature_pos = torch.cat(poss, dim=1)
+        # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
+        src = torch.stack(mul_features, dim=2).flatten(3).flatten(2).transpose(1, 2).contiguous()
+        attn = self.deformAttn(self.with_pos_embed(src, feature_pos), reference_points, src, spatial_shape)
+        # fuse
+        attn = attn.view(bs, self.num_features, h * w, -1).transpose(1, 2).view(bs, h * w, -1).contiguous()
+        attn = self.fuse(attn)
+        return attn
 
+
+class MixAttention(nn.Module):
+    def __init__(self, embed_dim, num_heads, num_points=4, ssm_ratio=1, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
+        super(MixAttention, self).__init__()
+        self.embed_dim = embed_dim
+        # self.convert =  nn.Conv2d(embed_dim, embed_dim, 5, padding=2, groups=dim)
+        self.attn = AttentionModule(embed_dim, num_heads, num_points, kernels=kernels, norm_cfg=norm_cfg)
+        self.norm = build_norm_layer(norm_cfg, embed_dim)[1]
+        self.ssm = VSSM(d_model=embed_dim, expansion_ratio=ssm_ratio)
+        self.dwconv = nn.Sequential(
+                nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim),
+                nn.BatchNorm2d(embed_dim),
+        )
+        self.act = nn.GELU()
+        self.norm1 = build_norm_layer(norm_cfg, embed_dim)[1]
+        self.proj = nn.Conv2d(embed_dim, embed_dim, kernel_size=1)
+
+    def forward(self, x, pos_enc):
+        b, c, h, w = x.shape
+        # x = self.convert(x) 
+        shorcut = x
+        x = self.attn(x, pos_enc)
+        x = self.norm(x)
+        v_r = x.view(b, h, w, c).permute(0, 3, 1, 2).contiguous()
+        v = self.dwconv(v_r)
+        v = self.act(v)
+        v = self.ssm(v)
+        v = v.permute(0, 2, 1).contiguous()
+        v = self.norm1(v)
+        v = v.permute(0, 2, 1).view(b, -1, h, w).contiguous()
+        x = v_r + v
+        x = x + shorcut
+        x = self.proj(x)
         return x
-
-        
 
 
 class MixBlock(nn.Module): 
-    def __init__(self, in_channels, out_channels, embed_dim, num_heads, num_points=4, mlp_ratio, drop_path=0, is_scale=False, layer_scale_init_values=1e-6, norm_layer=LayerNorm2d):
+    def __init__(self, embed_dim, num_heads, num_points=4, mlp_ratio=1.0, drop_path=0, kernels=[7, 11, 21], is_scale=False, layer_scale_init_values=1e-6, norm_cfg=None, ssm_ratio=1):
         super(MixBlock, self).__init__()
         self.embed_dim = embed_dim
         self.cpe1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
-        self.norm1 = norm_layer(embed_dim)
-        self.attn = None
+        self.norm1 = LayerNorm2d(embed_dim)
+        self.attn = MixAttention(embed_dim, num_heads, num_points, kernels=kernels, norm_cfg=norm_cfg)
         self.cpe2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
-        self.norm2 = norm_layer(embed_dim)
+        self.norm2 = LayerNorm2d(embed_dim)
         self.mlp = FFN(embed_dim, int(embed_dim * mlp_ratio))
         self.drop_path = DropPath(drop_path) if drop_path > 0 else nn.Identity()
         if is_scale:
@@ -145,80 +212,129 @@ class MixBlock(nn.Module):
 
 
 class MixLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, embed_dim, depths, num_heads, downsample=None, norm_cfg=None):
+    def __init__(self, embed_dim, depths, num_heads, kernels=[7, 11, 21], num_points=4, mlp_ratio=4, drop_path=0, is_scale=True, layer_scale_init_values=1e-6, downsample=None, norm_cfg=None,
+    use_checkpoint=0, pos_func="relative", ssm_ratio=1):
+        assert norm_cfg is not None, "norm_cfg not be None"
         super(MixLayer, self).__init__()
-        self.rope = RoPE(embed_dim, num_heads)
+        if pos_func == "relative":
+            self.encode_pos = PositionEmbeddingSine(embed_dim, normalize=True)
+        else:
+            raise ValueError(f"Unsupported positional encoding function: {pos_func}")
+        self.use_checkpoint = use_checkpoint
+        self.blocks = nn.ModuleList()
+        for i in range(depths):
+            block = MixBlock(
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                num_points=num_points,
+                mlp_ratio=mlp_ratio,
+                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                kernels=kernels,
+                is_scale=is_scale,
+                layer_scale_init_values=layer_scale_init_values,
+                norm_cfg=norm_cfg,
+                ssm_ratio=ssm_ratio
+            )
+            self.blocks.append(block)
+        if downsample is not None:
+            self.downsample = downsample(embed_dim, norm_cfg=norm_cfg)
 
 
     def forward(self, x):
-        pos_enc = self.rope((x.shape[2:]))
+        # x: (N, C, H, W)
+        pos = self.encode_pos(x)
+        for i, blk in enumerate(self.blocks):
+            if i < self.use_checkpoint and x.requires_grad:
+                x = checkpoint.checkpoint(blk, x, pos, use_reentrant=False)
+            else:
+                x = blk(x, pos)
+        # x: (N, C, H / 2, W / 2)
+        if hasattr(self, 'downsample'):
+            x = self.downsample(x)
         return x
 
 
 @BACKBONES.register_module()
 class mixer(BaseModule):
-    """
-    MMSegmentation兼容的Mamba主干网络
-    """
     def __init__(self,
-                 patch_size=4,
-                 in_chans=3,
-                 depths=[2, 2, 9, 2],
-                 dims=[96, 192, 384, 768],
-                 d_state=16,
-                 drop_rate=0.,
-                 attn_drop_rate=0.,
+                 in_channels=3,
+                 depths=[2, 2, 9, 4],
+                 dims=[64, 144, 288, 512],
+                 num_heads=[2, 4, 8, 16],
+                 mlp_ratios=[4, 4, 4, 4],
+                 kernels=[7, 11, 21],
+                 num_points=[4, 6, 6, 8],
                  drop_path_rate=0.1,
-                 norm_layer=nn.LayerNorm,
-                 patch_norm=True,
-                 norm_cfg=None,
+                 layer_init_values=1e-6,
+                 norm_cfg=dict(type='LN', requires_grad=True),
+                 patch_norm= dict(type='SyncBN', requires_grad=True),
                  use_checkpoint=False,
                  out_indices=(0, 1, 2, 3),
                  pretrained=None,
-                 ape=False,
+                 pos_func="relative", # positional encoding function: rope\relative\absolute
+                 ssm_ratio=1,
+                 scale=False,
                  init_cfg=None,
                  **kwargs):
         super().__init__(init_cfg=init_cfg)
+        assert len(depths) == len(dims) == len(num_heads) == len(num_points) == len(mlp_ratios), "depths, dims, num_heads, num_points and mlp_ratios must have the same length"
+        
         self.num_layers = len(depths)
-        if isinstance(dims, int):
-            dims = [int(dims * 2 ** i_layer) for i_layer in range(self.num_layers)]
         self.embed_dim = dims[0]
         self.num_features = dims[-1]
         self.dims = dims
         self.out_indices = out_indices
-        self.ape = ape
-        # 图像到patch的转换
-        self.patch_embed = PatchEmbed2D(
-            patch_size=patch_size,
-            in_chans=in_chans,
-            embed_dim=self.embed_dim,
-            norm_layer=norm_layer if patch_norm else None
-        )
-        # 提取特征
-        self.stem = StemConv(in_channels, dims[0], norm_cfg)
-        self.layers = nn.ModuleList()
-        for i_layer in range(self.num_layers):
-            layer = None
-            self.layers.append(layer)
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
-        ### 使用多个特征层 def SPPF，提取丰富语义特征
-        # 初始化权重
+        # 提取特征
+        self.patch_embed0 = StemConv(in_channels, dims[0], patch_norm)
+        # self.layers = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            layer = MixLayer(
+                embed_dim=dims[i_layer],
+                depths=depths[i_layer],
+                num_heads=num_heads[i_layer],
+                kernels=kernels,
+                num_points=num_points[i_layer],
+                mlp_ratio=mlp_ratios[i_layer],
+                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                is_scale=scale,
+                layer_scale_init_values=layer_init_values,
+                downsample=None,
+                norm_cfg=norm_cfg,
+                use_checkpoint=use_checkpoint
+                pos_func=pos_func,
+                ssm_ratio=ssm_ratio
+            )
+            layer_downsample = OverlapPatchEmbed(patch_size=3, stride=2, in_chans=dims[i_layer], embed_dim=dims[i_layer + 1], norm_cfg=patch_norm) if i_layer < self.num_layers - 1 else None
+            norm = build_norm_layer(norm_cfg, dims[i_layer])[1]
+            setattr(self, f"patch_embed{i + 1}", layer_downsample)
+            setattr(self, f"norm{i + 1}", norm)
+            setattr(self, f"layer{i + 1}", layer)
+        
+
         self.apply(self._init_weights)
 
 
     def _init_weights(self, m):
         if hasattr(m, 'bias') and getattr(m.bias, '_no_reinit', False):
             return
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
+        if isinstance(m, nn.Conv2d):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
         elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
 
+    
     def init_weights(self):
         logger = get_root_logger()
         """自定义初始化权重"""
@@ -235,6 +351,25 @@ class mixer(BaseModule):
             self.load_state_dict(state_dict, strict=False)
         else:
             logger.info("No init_cfg provided. Using default initialization.")
-
+    
     def forward(self, x):
-        pass
+        outs = []
+        for i_layer in range(self.num_layers):
+            patch_embed = getattr(self, f"patch_embed{i}")
+            layer = getattr(self, f"layer{i + 1}")
+            norm = getattr(self, f"norm{i + 1}")
+            # bs, c, h, w
+            x = patch_embed(x)
+            x = layer(x)
+            b, c, h, w = x.shape
+            x = x.flatten(2).transpose(1, 2).contiguous()
+            x = norm(x)
+            x = x.transpose(1, 2).contiguous().view(b, c, h, w)
+            if i_layer in self.out_indices:
+                outs.append(x)
+        return outs
+
+            
+
+
+

@@ -5,7 +5,8 @@ from .evaluation import *  # noqa: F401, F403
 from .optimizers import *  # noqa: F401, F403
 from .seg import *  # noqa: F401, F403
 from .utils import *  # noqa: F401, F403
+from .deform_ops.modules.ms_deform_attn import MSDeformAttn
 
 __all__ = [
-    'OPTIMIZER_BUILDERS', 'build_optimizer', 'build_optimizer_constructor'
+    'OPTIMIZER_BUILDERS', 'build_optimizer', 'build_optimizer_constructor', 'MSDeformAttn'
 ]
