@@ -173,9 +173,9 @@ class StemConv(BaseModule):
         )
     def forward(self, x):
         x = self.proj(x)
-        _, _, H, W = x.size()
-        x = x.flatten(2).transpose(1, 2)
-        return x, H, W
+        # _, _, H, W = x.size()
+        # x = x.flatten(2).transpose(1, 2)
+        return x
 
 
 # 多层感受野

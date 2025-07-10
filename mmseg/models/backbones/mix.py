@@ -101,7 +101,7 @@ class AttentionModule(nn.Module):
         # bs, h_ * w_, 2
         reference_points = torch.stack((ref_x, ref_y), -1)
         # (bs, h_ * w_, 2) * (bs, 1, 2)
-        reference_points = reference_points[:, :] * valid_ratio[:, None]
+        reference_points = reference_points * valid_ratio[:, None]
         # (bs, h_ * w_, 2)
         return reference_points
     
@@ -109,30 +109,33 @@ class AttentionModule(nn.Module):
     def with_pos_embed(tensor, pos):
         return tensor if pos is None else tensor + pos
 
+    
     def forward(self, x, pos_enc):
         bs, c, h, w = x.shape
-        spatial_shape = torch.tensor([[h, w]] * self.num_features, dtype=torch.float32, device=x.device)
-        mask = torch.zeros_like(x[:, 0, :, :])
+        spatial_shape = [[h, w]] * self.num_features
+        mask = torch.zeros_like(x[:, 0, :, :], dtype=torch.bool, device=x.device)
         # bs, 2 当使用数据增强时，考虑有效mask
         valid_ratio = self.get_valid_ratio(mask)
         # bs, h * w, 2
-        reference_points = self.get_reference_points(spatial_shape[0], valid_ratio, x.device).repeat(1, self.num_features, 2)
+        reference_points = self.get_reference_points(spatial_shape[0], valid_ratio, x.device).repeat(1, self.num_features, 1)
+        
         # mul local features
         mul_features = self.extract_features(x)
         poss = []
           # bs, h * w, c
         pos_enc = pos_enc.flatten(2).transpose(1, 2).contiguous()
         for i in range(self.num_features):
-            l_pos = self.level_embed[i].view(1, 1, -1)
+            l_pos = self.level_embed[i].view(1, 1, -1).contiguous()
             pos = pos_enc + l_pos
             poss.append(pos)
         # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
         feature_pos = torch.cat(poss, dim=1)
         # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
         src = torch.stack(mul_features, dim=2).flatten(3).flatten(2).transpose(1, 2).contiguous()
+        spatial_shape = torch.tensor(spatial_shape, dtype=torch.int32, device=x.device)
         attn = self.deformAttn(self.with_pos_embed(src, feature_pos), reference_points, src, spatial_shape)
         # fuse
-        attn = attn.view(bs, self.num_features, h * w, -1).transpose(1, 2).view(bs, h * w, -1).contiguous()
+        attn = attn.reshape((bs, self.num_features, h * w, -1)).transpose(1, 2).reshape((bs, h * w, -1))
         attn = self.fuse(attn)
         return attn
 
@@ -160,13 +163,13 @@ class MixAttention(nn.Module):
         x = self.convert(x)
         x = self.attn(x, pos_enc)
         # x = self.norm(x)
-        v_r = x.view(b, h, w, c).permute(0, 3, 1, 2).contiguous()
+        v_r = x.reshape((b, h, w, c)).permute(0, 3, 1, 2)
         v = self.dwconv(v_r)
         v = self.act(v)
         v = self.ssm(v)
-        v = v.permute(0, 2, 1).contiguous()
+        v = v.permute(0, 2, 1)
         v = self.norm1(v)
-        v = v.permute(0, 2, 1).view(b, -1, h, w).contiguous()
+        v = v.permute(0, 2, 1).reshape((b, -1, h, w))
         x = v_r + v
         x = x + shorcut
         x = self.proj(x)
@@ -205,7 +208,7 @@ class MixLayer(nn.Module):
         assert norm_cfg is not None, "norm_cfg not be None"
         super(MixLayer, self).__init__()
         if pos_func == "relative":
-            self.encode_pos = PositionEmbeddingSine(embed_dim, normalize=True)
+            self.encode_pos = PositionEmbeddingSine(embed_dim // 2, normalize=True)
         else:
             raise ValueError(f"Unsupported positional encoding function: {pos_func}")
         self.use_checkpoint = use_checkpoint
@@ -231,6 +234,7 @@ class MixLayer(nn.Module):
 
     def forward(self, x):
         # x: (N, C, H, W)
+        
         pos = self.encode_pos(x)
         for i, blk in enumerate(self.blocks):
             if i < self.use_checkpoint and x.requires_grad:
@@ -349,7 +353,7 @@ class mixer(BaseModule):
             b, c, h, w = x.shape
             x = x.flatten(2).transpose(1, 2).contiguous()
             x = norm(x)
-            x = x.transpose(1, 2).contiguous().view(b, c, h, w)
+            x = x.transpose(1, 2).contiguous().reshape((b, c, h, w))
             if i_layer in self.out_indices:
                 outs.append(x)
         return outs

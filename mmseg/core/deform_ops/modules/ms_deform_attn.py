@@ -99,7 +99,7 @@ class MSDeformAttn(nn.Module):
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
-        input_level_start_index = torch.cat((input_spatial_shapes.new_zeros((1, )), input_spatial_shapes.prod(1).cumsum(0)[:-1]))
+        input_level_start_index = torch.cat((input_spatial_shapes.new_zeros((1, )), input_spatial_shapes.prod(1).cumsum(0)[:-1])).long()
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
@@ -116,17 +116,20 @@ class MSDeformAttn(nn.Module):
                                  + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
         elif reference_points.shape[-1] == 4:
             sampling_locations = reference_points[:, :, None, None, None, :2] \
-                                 + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+                                 + sampling_offsets / self.n_points * reference_points[:, :, None, None, None, 2:] * 0.5
         else:
             raise ValueError(
                 'Last dim of reference_points must be 2 or 4, but get {} instead.'.format(reference_points.shape[-1]))
         try:
             output = MSDeformAttnFunction.apply(
-                value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
+                value, input_spatial_shapes.long(), input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
+            
             #output = ms_deform_attn_core_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
-        except:
-            # CPU
-            # bs, h * w, n_head * c
+        except Exception as e:
+            print("-" * 10 + "MSDeformAttnFunction apply failed, using CPU fallback" + "-" * 10)
+            print("Exception:", e)
+            import traceback
+            traceback.print_exc()  # 打印完整错误栈
             output = ms_deform_attn_core_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
         # # For FLOPs calculation only
         # output = ms_deform_attn_core_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
