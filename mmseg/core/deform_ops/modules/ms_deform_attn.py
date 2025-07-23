@@ -124,7 +124,6 @@ class MSDeformAttn(nn.Module):
             output = MSDeformAttnFunction.apply(
                 value, input_spatial_shapes.long(), input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
             
-            #output = ms_deform_attn_core_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
         except Exception as e:
             print("-" * 10 + "MSDeformAttnFunction apply failed, using CPU fallback" + "-" * 10)
             print("Exception:", e)

@@ -24,6 +24,7 @@ class Reshape(nn.Module):
         y = x.permute((0, 3, 1, 2))
         return y
 
+
 def autopad(kernel_size):
     if isinstance(kernel_size, int):
         return kernel_size // 2
@@ -38,16 +39,16 @@ class depthwise(nn.Module):
         super(depthwise, self).__init__()
         self.conv1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=(1, kernel_size), padding=autopad((1, kernel_size)), groups=embed_dim)
         self.conv2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=(kernel_size, 1), padding=autopad((kernel_size, 1)), groups=embed_dim)
-        self.bn = build_norm_layer(norm_cfg, embed_dim)[1]
-        self.act = nn.GELU()
+        # self.bn = build_norm_layer(norm_cfg, embed_dim)[1]
+        # self.act = nn.GELU()
 
     def forward(self, x):
         x = self.conv1(x)
         x = self.conv2(x)
-        x = x.permute(0, 2, 3, 1)  # NCHW -> NHWC
-        x = self.bn(x)
-        x = x.permute(0, 3, 1, 2).contiguous()  # NHWC -> NCHW
-        x = self.act(x)
+        # x = x.permute(0, 2, 3, 1)  # NCHW -> NHWC
+        # x = self.bn(x)
+        # x = x.permute(0, 3, 1, 2).contiguous()  # NHWC -> NCHW
+        # x = self.act(x)
         return x
         
 
@@ -56,13 +57,13 @@ class FEModule(nn.Module):
         super(FEModule, self).__init__()
         assert kernels is not None and isinstance(kernels, list), "kernels must be a list of integers"
         self.num_conv = len(kernels)
-       
         self.dc = nn.ModuleList()
         for i, kernel_size in enumerate(kernels):
             self.dc.append(depthwise(embed_dim, kernel_size, norm_cfg))
     
     def forward(self, x):
         outs = []
+        outs.append(x)
         for layer in self.dc:
             out = layer(x)
             outs.append(out)
@@ -72,11 +73,12 @@ class FEModule(nn.Module):
 class AttentionModule(nn.Module):
     def __init__(self, embed_dim, n_heads, n_points=4, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
         super(AttentionModule, self).__init__()
-        self.num_features = len(kernels)
+        self.convert = nn.Conv2d(embed_dim, embed_dim, 1)
+        self.num_features = len(kernels) + 1
         self.extract_features = FEModule(embed_dim, kernels=kernels, norm_cfg=norm_cfg)
         self.deformAttn = MSDeformAttn(embed_dim, self.num_features, n_heads, n_points)
         self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
-        self.fuse = nn.Linear(embed_dim * self.num_features, embed_dim)
+        self.fuse = nn.Conv2d(self.num_features * embed_dim, embed_dim, 1)
 
 
     def get_valid_ratio(self, mask):
@@ -118,7 +120,6 @@ class AttentionModule(nn.Module):
         valid_ratio = self.get_valid_ratio(mask)
         # bs, h * w, 2
         reference_points = self.get_reference_points(spatial_shape[0], valid_ratio, x.device).repeat(1, self.num_features, 1)
-        
         # mul local features
         mul_features = self.extract_features(x)
         poss = []
@@ -135,7 +136,8 @@ class AttentionModule(nn.Module):
         spatial_shape = torch.tensor(spatial_shape, dtype=torch.int32, device=x.device)
         attn = self.deformAttn(self.with_pos_embed(src, feature_pos), reference_points, src, spatial_shape)
         # fuse
-        attn = attn.reshape((bs, self.num_features, h * w, -1)).transpose(1, 2).reshape((bs, h * w, -1))
+        # attn = attn.reshape((bs, self.num_features, h * w, -1)).transpose(1, 2).reshape((bs, h * w, -1))
+        x = attn.reshape((bs, self.num_features, h * w, -1)).transpose(2, 3).reshape((bs, -1, h, w))
         attn = self.fuse(attn)
         return attn
 
@@ -144,9 +146,8 @@ class MixAttention(nn.Module):
     def __init__(self, embed_dim, num_heads, num_points=4, ssm_ratio=1, global_mode=True, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
         super(MixAttention, self).__init__()
         self.embed_dim = embed_dim
-        self.convert = nn.Conv2d(embed_dim, embed_dim, 5, padding=2, groups=embed_dim)
         self.attn = AttentionModule(embed_dim, num_heads, num_points, kernels=kernels, norm_cfg=norm_cfg)
-        # self.norm = build_norm_layer(norm_cfg, embed_dim)[1]
+        self.norm = build_norm_layer(norm_cfg, embed_dim)[1]
         self.ssm = VSSM(d_model=embed_dim, expansion_ratio=ssm_ratio)
         self.dwconv = nn.Sequential(
                 nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim),
@@ -156,16 +157,16 @@ class MixAttention(nn.Module):
         self.norm1 = build_norm_layer(norm_cfg, embed_dim)[1]
         self.proj = nn.Conv2d(embed_dim, embed_dim, kernel_size=1)
 
+    
     ### atten 运算
     def forward(self, x, pos_enc):
         b, c, h, w = x.shape
         shorcut = x
-        x = self.convert(x)
-        x = self.attn(x, pos_enc)
-        # x = self.norm(x)
-        v_r = x.reshape((b, h, w, c)).permute(0, 3, 1, 2)
-        v = self.dwconv(v_r)
-        v = self.act(v)
+        atten = self.attn(x, pos_enc)
+        atten = atten.flatten(2).transpose(1, 2).contiguous()  # (b, c, h, w) -> (b, h * w, c)
+        x = x + self.norm(atten).reshape((b, h, w, c)).permute(0, 3, 1, 2)  # (b, h * w, c) -> (b, c, h, w)
+        v_r = x
+        v = self.act(self.dwconv(v_r))
         v = self.ssm(v)
         v = v.permute(0, 2, 1)
         v = self.norm1(v)
@@ -180,10 +181,10 @@ class MixBlock(nn.Module):
     def __init__(self, embed_dim, num_heads, num_points=4, mlp_ratio=1.0, drop_path=0, global_mode=False, kernels=[7, 11, 21], is_scale=False, layer_init_values=1e-6, norm_cfg=None, ssm_ratio=1):
         super(MixBlock, self).__init__()
         self.embed_dim = embed_dim
-        self.cpe1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
+        # self.cpe1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
         self.norm1 = LayerNorm2d(embed_dim)
         self.attn = MixAttention(embed_dim, num_heads, num_points, ssm_ratio=ssm_ratio, global_mode=global_mode, kernels=kernels, norm_cfg=norm_cfg)
-        self.cpe2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
+        # self.cpe2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
         self.norm2 = LayerNorm2d(embed_dim)
         self.mlp = FFN(embed_dim, int(embed_dim * mlp_ratio))
         self.drop_path = DropPath(drop_path) if drop_path > 0 else nn.Identity()
@@ -195,9 +196,9 @@ class MixBlock(nn.Module):
             self.layer_scale2 = nn.Identity()
 
     def forward(self, x, pos_enc):
-        x = x + self.cpe1(x)
+        # x = x + self.cpe1(x)
         x = x + self.drop_path(self.layer_scale1(self.attn(self.norm1(x), pos_enc)))
-        x = x + self.cpe2(x)
+        # x = x + self.cpe2(x)
         x = x + self.drop_path(self.layer_scale2(self.mlp(self.norm2(x))))
         return x
 
@@ -270,7 +271,6 @@ class mixer(BaseModule):
                  **kwargs):
         super().__init__(init_cfg=init_cfg)
         assert len(depths) == len(dims) == len(num_heads) == len(num_points) == len(mlp_ratios), "depths, dims, num_heads, num_points and mlp_ratios must have the same length"
-        
         self.num_layers = len(depths)
         self.embed_dim = dims[0]
         self.num_features = dims[-1]
