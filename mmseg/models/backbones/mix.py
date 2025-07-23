@@ -74,7 +74,7 @@ class AttentionModule(nn.Module):
     def __init__(self, embed_dim, n_heads, n_points=4, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
         super(AttentionModule, self).__init__()
         self.convert = nn.Conv2d(embed_dim, embed_dim, 1)
-        self.num_features = len(kernels) + 1
+        self.num_features = len(kernels) + 1  # include the original feature
         self.extract_features = FEModule(embed_dim, kernels=kernels, norm_cfg=norm_cfg)
         self.deformAttn = MSDeformAttn(embed_dim, self.num_features, n_heads, n_points)
         self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
@@ -138,7 +138,7 @@ class AttentionModule(nn.Module):
         # fuse
         # attn = attn.reshape((bs, self.num_features, h * w, -1)).transpose(1, 2).reshape((bs, h * w, -1))
         x = attn.reshape((bs, self.num_features, h * w, -1)).transpose(2, 3).reshape((bs, -1, h, w))
-        attn = self.fuse(attn)
+        attn = self.fuse(x)
         return attn
 
 
