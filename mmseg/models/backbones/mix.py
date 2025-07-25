@@ -77,7 +77,7 @@ class AttentionModule(nn.Module):
         self.num_features = len(kernels) + 1  # include the original feature
         self.extract_features = FEModule(embed_dim, kernels=kernels, norm_cfg=norm_cfg)
         self.deformAttn = MSDeformAttn(embed_dim, self.num_features, n_heads, n_points)
-        self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
+        # self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
         self.fuse = nn.Conv2d(self.num_features * embed_dim, embed_dim, 1)
 
 
@@ -122,19 +122,19 @@ class AttentionModule(nn.Module):
         reference_points = self.get_reference_points(spatial_shape[0], valid_ratio, x.device).repeat(1, self.num_features, 1)
         # mul local features
         mul_features = self.extract_features(x)
-        poss = []
-          # bs, h * w, c
-        pos_enc = pos_enc.flatten(2).transpose(1, 2).contiguous()
-        for i in range(self.num_features):
-            l_pos = self.level_embed[i].view(1, 1, -1).contiguous()
-            pos = pos_enc + l_pos
-            poss.append(pos)
-        # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
-        feature_pos = torch.cat(poss, dim=1)
+        # poss = []
+        #   # bs, h * w, c
+        # pos_enc = pos_enc.flatten(2).transpose(1, 2).contiguous()
+        # for i in range(self.num_features):
+        #     l_pos = self.level_embed[i].view(1, 1, -1).contiguous()
+        #     pos = pos_enc + l_pos
+        #     poss.append(pos)
+        # # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
+        # feature_pos = torch.cat(poss, dim=1)
         # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
         src = torch.stack(mul_features, dim=2).flatten(3).flatten(2).transpose(1, 2).contiguous()
         spatial_shape = torch.tensor(spatial_shape, dtype=torch.int32, device=x.device)
-        attn = self.deformAttn(self.with_pos_embed(src, feature_pos), reference_points, src, spatial_shape)
+        attn = self.deformAttn(self.with_pos_embed(src, pos_enc), reference_points, src, spatial_shape)
         # fuse
         # attn = attn.reshape((bs, self.num_features, h * w, -1)).transpose(1, 2).reshape((bs, h * w, -1))
         x = attn.reshape((bs, self.num_features, h * w, -1)).transpose(2, 3).reshape((bs, -1, h, w))
@@ -181,10 +181,10 @@ class MixBlock(nn.Module):
     def __init__(self, embed_dim, num_heads, num_points=4, mlp_ratio=1.0, drop_path=0, global_mode=False, kernels=[7, 11, 21], is_scale=False, layer_init_values=1e-6, norm_cfg=None, ssm_ratio=1):
         super(MixBlock, self).__init__()
         self.embed_dim = embed_dim
-        # self.cpe1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
+        self.cpe1 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
         self.norm1 = LayerNorm2d(embed_dim)
         self.attn = MixAttention(embed_dim, num_heads, num_points, ssm_ratio=ssm_ratio, global_mode=global_mode, kernels=kernels, norm_cfg=norm_cfg)
-        # self.cpe2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
+        self.cpe2 = nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim)
         self.norm2 = LayerNorm2d(embed_dim)
         self.mlp = FFN(embed_dim, int(embed_dim * mlp_ratio))
         self.drop_path = DropPath(drop_path) if drop_path > 0 else nn.Identity()
@@ -196,9 +196,9 @@ class MixBlock(nn.Module):
             self.layer_scale2 = nn.Identity()
 
     def forward(self, x, pos_enc):
-        # x = x + self.cpe1(x)
+        x = x + self.cpe1(x)
         x = x + self.drop_path(self.layer_scale1(self.attn(self.norm1(x), pos_enc)))
-        # x = x + self.cpe2(x)
+        x = x + self.cpe2(x)
         x = x + self.drop_path(self.layer_scale2(self.mlp(self.norm2(x))))
         return x
 
@@ -214,6 +214,8 @@ class MixLayer(nn.Module):
             raise ValueError(f"Unsupported positional encoding function: {pos_func}")
         self.use_checkpoint = use_checkpoint
         self.blocks = nn.ModuleList()
+        self.num_features = len(kernels) + 1  # include the original feature
+        self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
         for i in range(depths):
             block = MixBlock(
                 embed_dim=embed_dim,
@@ -235,8 +237,15 @@ class MixLayer(nn.Module):
 
     def forward(self, x):
         # x: (N, C, H, W)
-        
+        poss = []
         pos = self.encode_pos(x)
+        pos = pos.flatten(2).transpose(1, 2).contiguous()
+        for i in range(self.num_features):
+            l_pos = self.level_embed[i].view(1, 1, -1).contiguous()
+            pos = pos + l_pos
+            poss.append(pos)
+        # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
+        pos = torch.cat(poss, dim=1)
         for i, blk in enumerate(self.blocks):
             if i < self.use_checkpoint and x.requires_grad:
                 x = checkpoint.checkpoint(blk, x, pos, use_reentrant=False)
