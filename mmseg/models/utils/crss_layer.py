@@ -164,7 +164,7 @@ class StemConv(BaseModule):
 
         self.proj = nn.Sequential(
             nn.Conv2d(in_channels, out_channels // 2,
-                      kernel_size=2, stride=2, padding=1),
+                      kernel_size=3, stride=2, padding=1),
             build_norm_layer(norm_cfg, out_channels // 2)[1],
             nn.GELU(),
             nn.Conv2d(out_channels // 2, out_channels,

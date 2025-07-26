@@ -51,6 +51,29 @@ class depthwise(nn.Module):
         # x = self.act(x)
         return x
         
+class LightweightDownsampleBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(LightweightDownsampleBlock, self).__init__()
+        mid_channels = (in_channels + out_channels) // 2
+        self.block = nn.Sequential(
+            # 1x1 升维
+            nn.Conv2d(in_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.ReLU(inplace=True),
+
+            # 3x3 深度卷积（降采样）
+            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, stride=2, padding=1, groups=mid_channels, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.ReLU(inplace=True),
+
+            # 1x1 投影或再升维
+            nn.Conv2d(mid_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+    def forward(self, x):
+        return self.block(x)
+
 
 class FEModule(nn.Module):
     def __init__(self, embed_dim, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
@@ -74,7 +97,7 @@ class AttentionModule(nn.Module):
     def __init__(self, embed_dim, n_heads, n_points=4, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
         super(AttentionModule, self).__init__()
         self.convert = nn.Conv2d(embed_dim, embed_dim, 1)
-        self.num_features = len(kernels) + 1  # include the original feature
+        self.num_features = 4  # include the original feature
         self.extract_features = FEModule(embed_dim, kernels=kernels, norm_cfg=norm_cfg)
         self.deformAttn = MSDeformAttn(embed_dim, self.num_features, n_heads, n_points)
         # self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
@@ -112,7 +135,7 @@ class AttentionModule(nn.Module):
         return tensor if pos is None else tensor + pos
 
     
-    def forward(self, x, pos_enc):
+    def forward(self, x, pos_enc, cross_layer_inputs):
         bs, c, h, w = x.shape
         spatial_shape = [[h, w]] * self.num_features
         mask = torch.zeros_like(x[:, 0, :, :], dtype=torch.bool, device=x.device)
@@ -122,6 +145,8 @@ class AttentionModule(nn.Module):
         reference_points = self.get_reference_points(spatial_shape[0], valid_ratio, x.device).repeat(1, self.num_features, 1)
         # mul local features
         mul_features = self.extract_features(x)
+        if len(cross_layer_inputs) > 0:
+            mul_features = cross_layer_inputs + mul_features
         # poss = []
         #   # bs, h * w, c
         # pos_enc = pos_enc.flatten(2).transpose(1, 2).contiguous()
@@ -159,10 +184,10 @@ class MixAttention(nn.Module):
 
     
     ### atten 运算
-    def forward(self, x, pos_enc):
+    def forward(self, x, pos_enc, cross_layer_inputs):
         b, c, h, w = x.shape
         shorcut = x
-        atten = self.attn(x, pos_enc)
+        atten = self.attn(x, pos_enc, cross_layer_inputs)
         atten = atten.flatten(2).transpose(1, 2).contiguous()  # (b, c, h, w) -> (b, h * w, c)
         x = x + self.norm(atten).reshape((b, h, w, c)).permute(0, 3, 1, 2)  # (b, h * w, c) -> (b, c, h, w)
         v_r = x
@@ -195,9 +220,9 @@ class MixBlock(nn.Module):
             self.layer_scale1 = nn.Identity()
             self.layer_scale2 = nn.Identity()
 
-    def forward(self, x, pos_enc):
+    def forward(self, x, pos_enc, cross_layer_inputs):
         x = x + self.cpe1(x)
-        x = x + self.drop_path(self.layer_scale1(self.attn(self.norm1(x), pos_enc)))
+        x = x + self.drop_path(self.layer_scale1(self.attn(self.norm1(x), pos_enc, cross_layer_inputs)))
         x = x + self.cpe2(x)
         x = x + self.drop_path(self.layer_scale2(self.mlp(self.norm2(x))))
         return x
@@ -205,7 +230,7 @@ class MixBlock(nn.Module):
 
 class MixLayer(nn.Module):
     def __init__(self, embed_dim, depths, num_heads, kernels=[7, 11, 21], num_points=4, mlp_ratio=4, drop_path=0, is_scale=True, layer_scale_init_values=1e-6, downsample=None, norm_cfg=None,
-    use_checkpoint=0, pos_func="relative", ssm_ratio=1):
+    use_checkpoint=0, pos_func="relative", ssm_ratio=1, num_cross_layer_inputs=0):
         assert norm_cfg is not None, "norm_cfg not be None"
         super(MixLayer, self).__init__()
         if pos_func == "relative":
@@ -214,8 +239,10 @@ class MixLayer(nn.Module):
             raise ValueError(f"Unsupported positional encoding function: {pos_func}")
         self.use_checkpoint = use_checkpoint
         self.blocks = nn.ModuleList()
-        self.num_features = len(kernels) + 1  # include the original feature
+        self.num_features = 4  # include the original feature
         self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
+        self.change_state_blocks = nn.ModuleList([nn.Conv2d(embed_dim, embed_dim, 1) for _ in range(num_cross_layer_inputs)])
+        self.num_cross_layer_inputs = num_cross_layer_inputs
         for i in range(depths):
             block = MixBlock(
                 embed_dim=embed_dim,
@@ -228,29 +255,33 @@ class MixLayer(nn.Module):
                 layer_init_values=layer_scale_init_values,
                 norm_cfg=norm_cfg,
                 ssm_ratio=ssm_ratio,
-                global_mode = False
+                global_mode=False
+                # num_cross_layer_input=num_cross_layer_inputs
             )
             self.blocks.append(block)
         if downsample is not None:
             self.downsample = downsample(embed_dim, norm_cfg=norm_cfg)
 
 
-    def forward(self, x):
+    def forward(self, x, cross_layer_inputs):
         # x: (N, C, H, W)
         poss = []
         pos = self.encode_pos(x)
+        assert self.num_cross_layer_inputs == len(cross_layer_inputs), f"input cross_layer_inputs error"
         pos = pos.flatten(2).transpose(1, 2).contiguous()
         for i in range(self.num_features):
             l_pos = self.level_embed[i].view(1, 1, -1).contiguous()
             pos = pos + l_pos
             poss.append(pos)
+        for i in range(self.num_cross_layer_inputs):
+            cross_layer_inputs[i] = self.change_state_blocks[i](cross_layer_inputs[i])
         # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
         pos = torch.cat(poss, dim=1)
         for i, blk in enumerate(self.blocks):
             if i < self.use_checkpoint and x.requires_grad:
                 x = checkpoint.checkpoint(blk, x, pos, use_reentrant=False)
             else:
-                x = blk(x, pos)
+                x = blk(x, pos, cross_layer_inputs)
         # x: (N, C, H / 2, W / 2)
         if hasattr(self, 'downsample'):
             x = self.downsample(x)
@@ -281,6 +312,8 @@ class mixer(BaseModule):
         super().__init__(init_cfg=init_cfg)
         assert len(depths) == len(dims) == len(num_heads) == len(num_points) == len(mlp_ratios), "depths, dims, num_heads, num_points and mlp_ratios must have the same length"
         self.num_layers = len(depths)
+        self.num_kenels = len(kernels)
+        assert self.num_kenels - self.num_layers + 1 >=0, f"Invalid configuration: num_kenels ({self.num_kenels}) is too small for num_layers ({self.num_layers}). "
         self.embed_dim = dims[0]
         self.num_features = dims[-1]
         self.dims = dims
@@ -289,13 +322,14 @@ class mixer(BaseModule):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
         # 提取特征
         self.patch_embed0 = StemConv(in_channels, dims[0], patch_norm)
+        self.downsample_features = nn.ModuleList([LightweightDownsampleBlock(self.dims[i], self.dims[i + 1]) for i in range(self.num_layers - 1)])
         # self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
             layer = MixLayer(
                 embed_dim=dims[i_layer],
                 depths=depths[i_layer],
                 num_heads=num_heads[i_layer],
-                kernels=kernels,
+                kernels=kernels[:self.num_kenels - i_layer],
                 num_points=num_points[i_layer],
                 mlp_ratio=mlp_ratios[i_layer],
                 drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
@@ -305,7 +339,8 @@ class mixer(BaseModule):
                 norm_cfg=norm_cfg,
                 use_checkpoint=use_checkpoint,
                 pos_func=pos_func,
-                ssm_ratio=ssm_ratio
+                ssm_ratio=ssm_ratio,
+                num_cross_layer_inputs = i_layer
             )
             layer_downsample = OverlapPatchEmbed(patch_size=3, stride=2, in_chans=dims[i_layer], embed_dim=dims[i_layer + 1], norm_cfg=patch_norm) if i_layer < self.num_layers - 1 else None
             norm = build_norm_layer(norm_cfg, dims[i_layer])[1]
@@ -352,13 +387,19 @@ class mixer(BaseModule):
     
     def forward(self, x):
         outs = []
+        cross_layer_inputs = []
         for i_layer in range(self.num_layers):
             patch_embed = getattr(self, f"patch_embed{i_layer}")
             layer = getattr(self, f"layer{i_layer + 1}")
             norm = getattr(self, f"norm{i_layer + 1}")
             # bs, c, h, w
-            x = patch_embed(x)
-            x = layer(x)
+            y = patch_embed(x)
+            # 重采样与维度变换
+            if i_layer > 0:
+                for ii in range(len(cross_layer_inputs)):
+                    cross_layer_inputs[ii] = self.downsample_features[i_layer - 1](cross_layer_inputs[ii])
+            x = layer(y, cross_layer_inputs)
+            cross_layer_inputs.append(y)
             b, c, h, w = x.shape
             x = x.flatten(2).transpose(1, 2).contiguous()
             x = norm(x)
