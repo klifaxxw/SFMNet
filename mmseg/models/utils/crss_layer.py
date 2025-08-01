@@ -20,6 +20,7 @@ from .csm_triton import CrossMergeTriton, CrossScanTriton
 import selective_scan_cuda_oflex
 from torch.nn.modules.utils import _pair as to_2tuple
 
+# relative position encode
 class PositionEmbeddingSine(nn.Module):
     """
     This is a more standard version of the position embedding, very similar to the one
@@ -190,10 +191,7 @@ class BFEBlock(nn.Module):
         super(BFEBlock, self).__init__()
 
 
-# 傅里叶图像变换边缘特征增强
-class BFAttention(nn.Module):
-    def __init__(self, in_channels, norm_cfg=dict(type='SyncBN', requires_grad=True)):
-        super(BFAttention, self).__init__()
+
 
 
 
@@ -654,7 +652,7 @@ class VSSM(nn.Module):
             y = y.to(x.dtype)
         return y
 
-class CrossAttentionLayer(nn.Module):
+class CrossAttention(nn.Module):
     def __init__(self, d_model, nhead, dropout=0.0, normalize_before=False):
         super().__init__()
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
@@ -708,3 +706,30 @@ class CrossAttentionLayer(nn.Module):
                                     memory_key_padding_mask, pos, query_pos)
         return self.forward_post(tgt, memory, memory_mask,
                                  memory_key_padding_mask, pos, query_pos)
+
+class SFourierHiggTransform(nn.Module):
+    def __init__(self)
+        sobel_h = torch.tensor([[1, 0, -1],
+                                [2, 0, -2],
+                                [1, 0, -1]],
+                               dtype=torch.float32)
+        sobel_v = torch.tensor([[1, 2, 1],
+                                [0, 0, 0],
+                                [-1,-2,-1]],
+                               dtype=torch.float32)
+        self.register_buffer('sobelh', sobel_h)
+        self.register_buffer('sobelv', sobel_v)
+        self.sobelh_bais = nn.Parameter(torch.zeros(3, 3, dtype=torch.float32))
+        self.sobelv_bais = nn.Parameter(torch.zeros(3, 3, dtype=torch.float32))
+
+    
+    def
+
+
+# 傅里叶图像变换边缘特征增强
+class BFAttention(nn.Module):
+    def __init__(self, in_channels, norm_cfg=dict(type='SyncBN', requires_grad=True)):
+        super(BFAttention, self).__init__()
+    
+
+    def high_

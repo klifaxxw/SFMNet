@@ -215,7 +215,8 @@ class MixLayer(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.blocks = nn.ModuleList()
         self.num_features = len(kernels) + 1  # include the original feature
-        self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
+        # self.level_embed = nn.Parameter(torch.Tensor(self.num_features, embed_dim))
+        self.level_embed = nn.Embedding(self.num_features, embed_dim)
         for i in range(depths):
             block = MixBlock(
                 embed_dim=embed_dim,

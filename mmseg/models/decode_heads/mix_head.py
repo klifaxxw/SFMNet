@@ -16,6 +16,8 @@ class Reshape(nn.Module):
         y = x.permute((0, 3, 1, 2))
         return y
 
+
+
 @HEADS.register_module()
 class MixHead(BaseDecodeHead):
     """Mamba UNet Decode Head"""
@@ -42,8 +44,10 @@ class MixHead(BaseDecodeHead):
                          channels=channels,
                          in_index=in_index,
                         **kwargs)
-        
+        ### 傅里叶变换，频率域剥离与增强
+
         self.apply(self._init_weights)
+
     
     def _init_weights(self, m):
         if getattr(m, "_no_reinit", False) or (hasattr(m, 'bias') and getattr(m.bias, '_no_reinit', False)):
@@ -64,7 +68,7 @@ class MixHead(BaseDecodeHead):
             nn.init.zeros_(m.bias)
     
     def _forward_feature(self, inputs):
-        
+        pass
 
 
     def forward(self, inputs):
