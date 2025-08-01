@@ -366,8 +366,3 @@ class mixer(BaseModule):
             if i_layer in self.out_indices:
                 outs.append(x)
         return outs
-
-            
-
-
-

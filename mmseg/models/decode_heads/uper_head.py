@@ -73,7 +73,7 @@ class UPerHead(BaseDecodeHead):
             conv_cfg=self.conv_cfg,
             norm_cfg=self.norm_cfg,
             act_cfg=self.act_cfg)
-
+    
     def psp_forward(self, inputs):
         """Forward function of PSP module."""
         x = inputs[-1]
@@ -81,8 +81,8 @@ class UPerHead(BaseDecodeHead):
         psp_outs.extend(self.psp_modules(x))
         psp_outs = torch.cat(psp_outs, dim=1)
         output = self.bottleneck(psp_outs)
-
         return output
+
 
     def _forward_feature(self, inputs):
         """Forward function for feature maps before classifying each pixel with
@@ -102,7 +102,6 @@ class UPerHead(BaseDecodeHead):
             lateral_conv(inputs[i])
             for i, lateral_conv in enumerate(self.lateral_convs)
         ]
-
         laterals.append(self.psp_forward(inputs))
 
         # build top-down path
@@ -132,6 +131,7 @@ class UPerHead(BaseDecodeHead):
         fpn_outs = torch.cat(fpn_outs, dim=1)
         feats = self.fpn_bottleneck(fpn_outs)
         return feats
+
 
     def forward(self, inputs):
         """Forward function."""
