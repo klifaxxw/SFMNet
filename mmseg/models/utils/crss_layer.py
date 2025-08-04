@@ -7,8 +7,10 @@ from typing import Optional, Callable
 
 import torch
 import torch.nn as nn
+import torch.fft as fft
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
+from torch.nn.modules.utils import _pair as to_2tuple
 from einops import rearrange, repeat
 from timm.models.layers import DropPath, trunc_normal_
 from fvcore.nn import FlopCountAnalysis, flop_count_str, flop_count, parameter_count
@@ -18,7 +20,15 @@ from mmcv.runner import BaseModule
 from timm.models.vision_transformer import Mlp
 from .csm_triton import CrossMergeTriton, CrossScanTriton
 import selective_scan_cuda_oflex
-from torch.nn.modules.utils import _pair as to_2tuple
+
+def autopad(kernel_size):
+    if isinstance(kernel_size, int):
+        return kernel_size // 2
+    elif isinstance(kernel_size, tuple):
+        return tuple(k // 2 for k in kernel_size)
+    else:
+        raise TypeError('kernel_size must be int or tuple')
+
 
 # relative position encode
 class PositionEmbeddingSine(nn.Module):
@@ -158,6 +168,19 @@ class PatchExpand(nn.Module):
         x = self.norm(x)
         return x
 
+class UpSample(nn.Module):
+    def __init__(self, dim, odim, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.lateral_conv = nn.Conv2d(dim, odim, 1)
+
+
+    def forward(self, x):
+        x = self.lateral_conv(x)
+        ## 也可以替换为nn.ConvTranspose2d
+        x = F.interpolate(x, scale_factor=2, mode='nearest')
+        return x
+
+
 ### 特征初始变换
 class StemConv(BaseModule):
     def __init__(self, in_channels, out_channels, norm_cfg=dict(type='SyncBN', requires_grad=True)):
@@ -179,18 +202,15 @@ class StemConv(BaseModule):
         return x
 
 
-# 多层感受野
-class MRFBlock(nn.Module):
-    def __init__(self, dim, kernels=None, norm_cfg=dict(type='SyncBN', requires_grad=True)):
-        super(MRFBlock, self).__init__()
-        assert kernels is not None
 
 
-class BFEBlock(nn.Module):
-    def __init__(self, in_channels, norm_cfg=dict(type='SyncBN', requires_grad=True)):
-        super(BFEBlock, self).__init__()
-
-
+def autopad(kernel_size):
+    if isinstance(kernel_size, int):
+        return kernel_size // 2
+    elif isinstance(kernel_size, tuple):
+        return tuple(k // 2 for k in kernel_size)
+    else:
+        raise TypeError('kernel_size must be int or tuple')
 
 
 
@@ -304,17 +324,6 @@ class SpatialMExtend(nn.Module):
         return x
 
 
-def rotate_every_two(x):
-    x1 = x[:, :, :, :, ::2]
-    x2 = x[:, :, :, :, 1::2]
-    x = torch.stack([-x2, x1], dim=-1)
-    return x.flatten(-2)
-
-
-def theta_shift(x, sin, cos):
-    return (x * cos) + (rotate_every_two(x) * sin)
-
-
 # fvcore flops =======================================
 def flops_selective_scan_fn(B=1, L=256, D=768, N=16, with_D=True, with_Z=False, with_complex=False):
     """
@@ -372,47 +381,39 @@ class SelectiveScanOflex(torch.autograd.Function):
 
 
 class RoPE(nn.Module):
-
     def __init__(self, embed_dim, num_heads):
-        '''
-        recurrent_chunk_size: (clh clw)
-        num_chunks: (nch ncw)
-        clh * clw == cl
-        nch * ncw == nc
-
-        default: clh==clw, clh != clw is not implemented
-        '''
         super().__init__()
         angle = 1.0 / (10000 ** torch.linspace(0, 1, embed_dim // num_heads // 4))
         angle = angle.unsqueeze(-1).repeat(1, 2).flatten()
         self.register_buffer('angle', angle)
+        
 
     def forward(self, slen):
-        '''
-        slen: (h, w)
-        h * w == l
-        recurrent is not implemented
-        '''
-        # index = torch.arange(slen[0]*slen[1]).to(self.angle)
         index_h = torch.arange(slen[0]).to(self.angle)
         index_w = torch.arange(slen[1]).to(self.angle)
-        # sin = torch.sin(index[:, None] * self.angle[None, :]) #(l d1)
-        # sin = sin.reshape(slen[0], slen[1], -1).transpose(0, 1) #(w h d1)
         sin_h = torch.sin(index_h[:, None] * self.angle[None, :])  # (h d1//2)
         sin_w = torch.sin(index_w[:, None] * self.angle[None, :])  # (w d1//2)
         sin_h = sin_h.unsqueeze(1).repeat(1, slen[1], 1)  # (h w d1//2)
         sin_w = sin_w.unsqueeze(0).repeat(slen[0], 1, 1)  # (h w d1//2)
         sin = torch.cat([sin_h, sin_w], -1)  # (h w d1)
-        # cos = torch.cos(index[:, None] * self.angle[None, :]) #(l d1)
-        # cos = cos.reshape(slen[0], slen[1], -1).transpose(0, 1) #(w h d1)
         cos_h = torch.cos(index_h[:, None] * self.angle[None, :])  # (h d1//2)
         cos_w = torch.cos(index_w[:, None] * self.angle[None, :])  # (w d1//2)
         cos_h = cos_h.unsqueeze(1).repeat(1, slen[1], 1)  # (h w d1//2)
         cos_w = cos_w.unsqueeze(0).repeat(slen[0], 1, 1)  # (h w d1//2)
         cos = torch.cat([cos_h, cos_w], -1)  # (h w d1)
-
         return (sin, cos)
 
+def rotate_every_two(x):
+    x1 = x[:, :, :, :, ::2]
+    x2 = x[:, :, :, :, 1::2]
+    x = torch.stack([-x2, x1], dim=-1)
+    return x.flatten(-2)
+
+
+def theta_shift(x, sin, cos):
+    return (x * cos) + (rotate_every_two(x) * sin)
+
+    
 
 class LayerScale(nn.Module):
     def __init__(self, dim, init_value=1e-5, enable_bias=True):
@@ -653,83 +654,111 @@ class VSSM(nn.Module):
         return y
 
 class CrossAttention(nn.Module):
-    def __init__(self, d_model, nhead, dropout=0.0, normalize_before=False):
+    def __init__(self, d_model, nhead, mlp_ratio=4.0, drop_path_rate=0.05):
         super().__init__()
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         self.norm = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.activation = nn.GELU()
-        self.normalize_before = normalize_before
+        self.norm1 = nn.LayerNorm(d_model)
+        # self.dropout = nn.Dropout(dropout)
+        self.drop_path = DropPath(drop_path) if drop_path > 0 else nn.Identity()
+        self.ffn = FFN(d_model, int(d_model * mlp_ratio))
         self._reset_parameters()
     
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+                nn.init.xavier_uniform_(p)    
 
-    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
-
-    def forward_post(self, tgt, memory,
-                     memory_mask: Optional[Tensor] = None,
-                     memory_key_padding_mask: Optional[Tensor] = None,
-                     pos: Optional[Tensor] = None,
-                     query_pos: Optional[Tensor] = None):
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
-                                   key=self.with_pos_embed(memory, pos),
-                                   value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
-        tgt = tgt + self.dropout(tgt2)
-        tgt = self.norm(tgt)
-        return tgt
-    
-    def forward_pre(self, tgt, memory,
-                    memory_mask: Optional[Tensor] = None,
-                    memory_key_padding_mask: Optional[Tensor] = None,
-                    pos: Optional[Tensor] = None,
-                    query_pos: Optional[Tensor] = None):
-        tgt2 = self.norm(tgt)
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
-                                   key=self.with_pos_embed(memory, pos),
-                                   value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
-        tgt = tgt + self.dropout(tgt2)
-        return tgt
-
-    def forward(self, tgt, memory,
+    def forward(self, q, k, v,
                 memory_mask: Optional[Tensor] = None,
                 memory_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None,
-                query_pos: Optional[Tensor] = None):
-        if self.normalize_before:
-            return self.forward_pre(tgt, memory, memory_mask,
-                                    memory_key_padding_mask, pos, query_pos)
-        return self.forward_post(tgt, memory, memory_mask,
-                                 memory_key_padding_mask, pos, query_pos)
+                ):
+        q = self.norm(q)
+        tgt = self.multihead_attn(query=q,
+                                   key=k,
+                                   value=v, attn_mask=memory_mask,
+                                   key_padding_mask=memory_key_padding_mask)[0]
+        tgt = q + self.drop_path(tgt)
+        tgt = self.norm1(tgt)
+        tgt = tgt + self.drop_path(self.ffn(tgt))
+        return tgt
 
+
+## 空间域的傅里叶数据变换增强
 class SFourierHiggTransform(nn.Module):
     def __init__(self)
-        sobel_h = torch.tensor([[1, 0, -1],
+        super().__init__()
+        sobelh = torch.tensor([[1, 0, -1],
                                 [2, 0, -2],
                                 [1, 0, -1]],
                                dtype=torch.float32)
-        sobel_v = torch.tensor([[1, 2, 1],
+        sobelv = torch.tensor([[1, 2, 1],
                                 [0, 0, 0],
                                 [-1,-2,-1]],
                                dtype=torch.float32)
-        self.register_buffer('sobelh', sobel_h)
-        self.register_buffer('sobelv', sobel_v)
-        self.sobelh_bais = nn.Parameter(torch.zeros(3, 3, dtype=torch.float32))
-        self.sobelv_bais = nn.Parameter(torch.zeros(3, 3, dtype=torch.float32))
-
+        self.register_buffer('sobelh', sobelh)
+        self.register_buffer('sobelv', sobelv)
+        self.sobelh_w = nn.Parameter(torch.ones(3, 3, dtype=torch.float32))
+        self.sobelv_w = nn.Parameter(torch.ones(3, 3, dtype=torch.float32))
+        self.sobelh_b = nn.Parameter(torch.zeros(3, 3, dtype=torch.float32))
+        self.sobelv_b = nn.Parameter(torch.zeros(3, 3, dtype=torch.float32))
     
-    def
+    def forward(self, x):
+        b, c, h, w = x.shape
+        device = x.device
+        sobelh = self.sobelh_w * self.sobelh + self.sobelh_b 
+        sobelv = self.sobelv_w * self.sobelv + self.sobelv_b 
+        fx = torch.zeros((h, w), dtype=x.dtype, device=device)
+        fy = torch.zeros((h, w), dtype=x.dtype, device=device)
+        fx[:3, :3] = sobelh
+        fy[:3, :3] = sobelv
+        FX = fft.fftshift(fft.fft2(fx))
+        FY = fft.fftshift(fft.fft2(fy))
+        FX = FX.view(1, 1, H, W)
+        FY = FY.view(1, 1, H, W)
+        F = fft.fftshift(fft.fft2(images, dim=(-2, -1)), dim=(-2, -1))
+        Gx = F * FX
+        Gy = F * FY
+        gx = torch.abs(fft.ifft2(fft.ifftshift(Gx, dim=(-2, -1)), dim=(-2, -1)))
+        gy = torch.abs(fft.ifft2(fft.ifftshift(Gy, dim=(-2, -1)), dim=(-2, -1)))
+        g = torch.sqrt(gx ** 2 + gy ** 2)
+        return g
 
 
-# 傅里叶图像变换边缘特征增强
-class BFAttention(nn.Module):
-    def __init__(self, in_channels, norm_cfg=dict(type='SyncBN', requires_grad=True)):
-        super(BFAttention, self).__init__()
-    
 
-    def high_
+class HFFTAttention(nn.Module):
+    def __init__(self, embed_dim, norm_cfg=dict(type='SyncBN', requires_grad=True)):
+        super().__init__()
+        self.proj = nn.Conv2d(embed_dim, embed_dim, 3, 1)
+        self.fft = SFourierHiggTransform()
+        self.norm = build_norm_layer(norm_cfg, embed_dim)[0]
+        self.act = nn.GELU()
+        self.convert = nn.Conv2d(embed_dim, embed_dim, 3, 1)
+
+    def forward(self, x):
+        shortcut = x.clone()
+        x = self.proj(x)
+        x = self.fft(x)
+        x = x + shortcut
+        x = self.act(self.norm(x))
+        x = self.convert(x)
+        return x
+
+class SEBlock(nn.Module):
+    def __init__(self, channels: int, reduction: int = 16):
+        super().__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels // reduction, channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, C, H, W]
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c).contiguous()
+        y = self.fc(y).view(b, c, 1, 1).contiguous()
+        return x * y
+

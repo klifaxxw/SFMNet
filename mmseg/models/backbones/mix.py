@@ -25,13 +25,6 @@ class Reshape(nn.Module):
         return y
 
 
-def autopad(kernel_size):
-    if isinstance(kernel_size, int):
-        return kernel_size // 2
-    elif isinstance(kernel_size, tuple):
-        return tuple(k // 2 for k in kernel_size)
-    else:
-        raise TypeError('kernel_size must be int or tuple')
 
 
 class depthwise(nn.Module):
