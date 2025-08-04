@@ -670,8 +670,8 @@ class CrossAttention(nn.Module):
                 nn.init.xavier_uniform_(p)    
 
     def forward(self, q, k, v,
-                memory_mask = None,
-                memory_key_padding_mask = None,
+                memory_mask,
+                memory_key_padding_mask,
                 ):
         q = self.norm(q)
         tgt = self.multihead_attn(query=q,
@@ -714,9 +714,9 @@ class SFourierHiggTransform(nn.Module):
         fy[:3, :3] = sobelv
         FX = fft.fftshift(fft.fft2(fx))
         FY = fft.fftshift(fft.fft2(fy))
-        FX = FX.view(1, 1, h, w)
-        FY = FY.view(1, 1, h, w)
-        F = fft.fftshift(fft.fft2(x, dim=(-2, -1)), dim=(-2, -1))
+        FX = FX.view(1, 1, H, W)
+        FY = FY.view(1, 1, H, W)
+        F = fft.fftshift(fft.fft2(images, dim=(-2, -1)), dim=(-2, -1))
         Gx = F * FX
         Gy = F * FY
         gx = torch.abs(fft.ifft2(fft.ifftshift(Gx, dim=(-2, -1)), dim=(-2, -1)))
@@ -736,9 +736,13 @@ class HFFTAttention(nn.Module):
         self.convert = nn.Conv2d(embed_dim, embed_dim, 3, 1)
 
     def forward(self, x):
+        print("->-" * 50)
+        print(x.shape)
         shortcut = x.clone()
         x = self.proj(x)
         x = self.fft(x)
+        print("->-" * 50)
+        print(x.shape)
         x = x + shortcut
         x = self.act(self.norm(x))
         x = self.convert(x)
@@ -754,7 +758,6 @@ class SEBlock(nn.Module):
             nn.Linear(channels // reduction, channels, bias=False),
             nn.Sigmoid()
         )
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [B, C, H, W]
         b, c, _, _ = x.size()
