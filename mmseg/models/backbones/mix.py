@@ -235,7 +235,7 @@ class MixLayer(nn.Module):
         pos = self.encode_pos(x)
         pos = pos.flatten(2).transpose(1, 2).contiguous()
         for i in range(self.num_features):
-            l_pos = self.level_embed[i].view(1, 1, -1).contiguous()
+            l_pos = self.level_embed.weight[i].view(1, 1, -1).contiguous()
             pos = pos + l_pos
             poss.append(pos)
         # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c

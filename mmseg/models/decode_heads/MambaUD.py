@@ -16,7 +16,7 @@ class Reshape(nn.Module):
         return y
 
 @HEADS.register_module()
-class MixHead(BaseDecodeHead):
+class MambaUD(BaseDecodeHead):
     """Mamba UNet Decode Head"""
     def __init__(self,
                  depths=[2, 2, 9, 2],

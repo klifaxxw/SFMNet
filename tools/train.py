@@ -28,7 +28,7 @@ from mmseg.utils import (collect_env, get_device, get_root_logger,
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
-    parser.add_argument('--config', default="local_configs/CTmamba/mixer_mamba_upernet_tiny_soild_160k_adwn.py", help='train config file path')
+    parser.add_argument('--config', default="local_configs/CTmamba/mixer_mamba_mixHead_tiny_soild_160k_adwn.py", help='train config file path')
     # Umamba_tiny
     parser.add_argument('--work-dir', default="runs/mix_7", help='the dir to save logs and models')
     parser.add_argument(

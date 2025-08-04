@@ -654,9 +654,9 @@ class VSSM(nn.Module):
         return y
 
 class CrossAttention(nn.Module):
-    def __init__(self, d_model, nhead, mlp_ratio=4.0, drop_path_rate=0.05):
+    def __init__(self, d_model, nhead, mlp_ratio=4.0, drop_path=0.05):
         super().__init__()
-        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=0)
         self.norm = nn.LayerNorm(d_model)
         self.norm1 = nn.LayerNorm(d_model)
         # self.dropout = nn.Dropout(dropout)
@@ -670,8 +670,8 @@ class CrossAttention(nn.Module):
                 nn.init.xavier_uniform_(p)    
 
     def forward(self, q, k, v,
-                memory_mask: Optional[Tensor] = None,
-                memory_key_padding_mask: Optional[Tensor] = None,
+                memory_mask = None,
+                memory_key_padding_mask = None,
                 ):
         q = self.norm(q)
         tgt = self.multihead_attn(query=q,
@@ -686,7 +686,7 @@ class CrossAttention(nn.Module):
 
 ## 空间域的傅里叶数据变换增强
 class SFourierHiggTransform(nn.Module):
-    def __init__(self)
+    def __init__(self):
         super().__init__()
         sobelh = torch.tensor([[1, 0, -1],
                                 [2, 0, -2],
@@ -714,9 +714,9 @@ class SFourierHiggTransform(nn.Module):
         fy[:3, :3] = sobelv
         FX = fft.fftshift(fft.fft2(fx))
         FY = fft.fftshift(fft.fft2(fy))
-        FX = FX.view(1, 1, H, W)
-        FY = FY.view(1, 1, H, W)
-        F = fft.fftshift(fft.fft2(images, dim=(-2, -1)), dim=(-2, -1))
+        FX = FX.view(1, 1, h, w)
+        FY = FY.view(1, 1, h, w)
+        F = fft.fftshift(fft.fft2(x, dim=(-2, -1)), dim=(-2, -1))
         Gx = F * FX
         Gy = F * FY
         gx = torch.abs(fft.ifft2(fft.ifftshift(Gx, dim=(-2, -1)), dim=(-2, -1)))
