@@ -359,4 +359,6 @@ class mixer(BaseModule):
             x = x.transpose(1, 2).contiguous().reshape((b, c, h, w))
             if i_layer in self.out_indices:
                 outs.append(x)
+                # print("*"*50)
+                # print(x.shape)
         return outs

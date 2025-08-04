@@ -60,10 +60,10 @@ model = dict(
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
 
-data = dict(samples_per_gpu=8)
+data = dict(samples_per_gpu=6)
 evaluation = dict(interval=3000, metric='mIoU')
 checkpoint_config = dict(by_epoch=False, interval=3000)
-runner = dict(type='IterBasedRunner', max_iters=40000)
+runner = dict(type='IterBasedRunner', max_iters=44000)
 # optimizer
 optimizer = dict(_delete_=True, type='AdamW', lr=1e-5, betas=(0.9, 0.999), weight_decay=0.01,
                  paramwise_cfg=dict(custom_keys={'norm': dict(decay_mult=0.),

@@ -188,7 +188,7 @@ class StemConv(BaseModule):
 
         self.proj = nn.Sequential(
             nn.Conv2d(in_channels, out_channels // 2,
-                      kernel_size=2, stride=2, padding=1),
+                      kernel_size=3, stride=2, padding=1),
             build_norm_layer(norm_cfg, out_channels // 2)[1],
             nn.GELU(),
             nn.Conv2d(out_channels // 2, out_channels,
@@ -475,7 +475,6 @@ class FFN(nn.Module):
         self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
     def forward(self, x):
-        
         x = self.fc1(x)
         x = self.act_layer(x)
         x = x + self.dwconv(x)
@@ -656,7 +655,7 @@ class VSSM(nn.Module):
 class CrossAttention(nn.Module):
     def __init__(self, d_model, nhead, mlp_ratio=4.0, drop_path=0.05):
         super().__init__()
-        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=0)
+        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=0, batch_first=True)
         self.norm = nn.LayerNorm(d_model)
         self.norm1 = nn.LayerNorm(d_model)
         # self.dropout = nn.Dropout(dropout)
@@ -670,9 +669,11 @@ class CrossAttention(nn.Module):
                 nn.init.xavier_uniform_(p)    
 
     def forward(self, q, k, v,
-                memory_mask,
-                memory_key_padding_mask,
+                memory_mask=None,
+                memory_key_padding_mask=None,
                 ):
+        b, c, h, w = q.shape
+        q = q.reshape((b, c, -1)).transpose(1, 2)
         q = self.norm(q)
         tgt = self.multihead_attn(query=q,
                                    key=k,
@@ -680,6 +681,7 @@ class CrossAttention(nn.Module):
                                    key_padding_mask=memory_key_padding_mask)[0]
         tgt = q + self.drop_path(tgt)
         tgt = self.norm1(tgt)
+        tgt = tgt.transpose(1, 2).reshape((b, -1, h, w))
         tgt = tgt + self.drop_path(self.ffn(tgt))
         return tgt
 
@@ -714,9 +716,9 @@ class SFourierHiggTransform(nn.Module):
         fy[:3, :3] = sobelv
         FX = fft.fftshift(fft.fft2(fx))
         FY = fft.fftshift(fft.fft2(fy))
-        FX = FX.view(1, 1, H, W)
-        FY = FY.view(1, 1, H, W)
-        F = fft.fftshift(fft.fft2(images, dim=(-2, -1)), dim=(-2, -1))
+        FX = FX.view(1, 1, h, w)
+        FY = FY.view(1, 1, h, w)
+        F = fft.fftshift(fft.fft2(x, dim=(-2, -1)), dim=(-2, -1))
         Gx = F * FX
         Gy = F * FY
         gx = torch.abs(fft.ifft2(fft.ifftshift(Gx, dim=(-2, -1)), dim=(-2, -1)))
@@ -729,20 +731,16 @@ class SFourierHiggTransform(nn.Module):
 class HFFTAttention(nn.Module):
     def __init__(self, embed_dim, norm_cfg=dict(type='SyncBN', requires_grad=True)):
         super().__init__()
-        self.proj = nn.Conv2d(embed_dim, embed_dim, 3, 1)
+        self.proj = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
         self.fft = SFourierHiggTransform()
-        self.norm = build_norm_layer(norm_cfg, embed_dim)[0]
+        self.norm = build_norm_layer(norm_cfg, embed_dim)[1]
         self.act = nn.GELU()
-        self.convert = nn.Conv2d(embed_dim, embed_dim, 3, 1)
+        self.convert = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
 
     def forward(self, x):
-        print("->-" * 50)
-        print(x.shape)
         shortcut = x.clone()
         x = self.proj(x)
         x = self.fft(x)
-        print("->-" * 50)
-        print(x.shape)
         x = x + shortcut
         x = self.act(self.norm(x))
         x = self.convert(x)

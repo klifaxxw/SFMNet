@@ -31,7 +31,7 @@ class CrossBlock(nn.Module):
         self.num_head = n_head
         self.num_features = len(in_channels)
         for i, in_channel in enumerate(in_channels):
-            ll = nn.Linear(in_channel, ebdim)
+            ll = nn.Conv2d(in_channel, ebdim, 3, 1, 1)
             kv = nn.Linear(ebdim, 2 * ebdim)
             cross = CrossAttention(ebdim, n_head, mlp_ratio, drop_path_rate)
             self.pre.append(ll)
@@ -39,7 +39,7 @@ class CrossBlock(nn.Module):
             self.kv_proj.append(kv)
         self.conv = nn.Conv2d(2, 1, kernel_size, padding=autopad(kernel_size), bias=False)
         self.se = SEBlock(ebdim, reduction)
-        self.norm = build_norm_layer(norm_cfg, ebdim)[0]
+        self.norm = build_norm_layer(norm_cfg, ebdim)[1]
         self.act = nn.GELU()
         
     def apply_rotateEnc(self, x, sin, cos, b, c, h, w):
@@ -56,15 +56,15 @@ class CrossBlock(nn.Module):
         rs = []
         for i_layer in range(self.num_features):
             input = inputs[i_layer]
-            input = self.pre[i_layer](input)
             _, _ , h1, w1 = input.shape
-            sin1, cos1 = self.rope((h1, w1))
+            input = self.pre[i_layer](input)
             input = input.reshape((b, c, -1)).transpose(1, 2)
+            sin1, cos1 = self.rope((h1, w1))
             kv = self.kv_proj[i_layer](input)
             k, v = kv.split(c, dim=-1)
             k = self.apply_rotateEnc(k, sin1, cos1, b, c, h1, w1)
+            q = q.transpose(1, 2).reshape((b, -1, h, w))
             out = self.cr[i_layer](q, k, v)
-            out = out.transpose(1, 2).reshape((b, c, h, w))
             rs.append(out)
         ## balance sum
         rs = torch.stack(rs, dim=1) ## bs, num_features, c, h, w
@@ -104,11 +104,12 @@ class SelfBlock(nn.Module):
         q, k, v = qkv.split(c, dim=-1)
         q = self.apply_rotateEnc(q, sin, cos, b, c, h, w)
         k = self.apply_rotateEnc(k, sin, cos, b, c, h, w)
-        rs = self.self.attention(q, k, v)
+        q = q.transpose(1, 2).reshape((b, -1, h, w))
+        rs = self.attention(q, k, v)
         return rs
 
 class SSD(nn.Module):
-    def __init__(self, ebdim, ssm_ratio=1, norm_cfg=dict(type='LN', requires_grad=True)):
+    def __init__(self, ebdim, ssm_ratio=1, mlp_ratio=4, drop_path=0.05, norm_cfg=dict(type='LN', requires_grad=True)):
         super().__init__()
         self.ssm = VSSM(d_model=ebdim, expansion_ratio=ssm_ratio)
         self.dwconv = nn.Sequential(
@@ -118,17 +119,28 @@ class SSD(nn.Module):
         self.act = nn.GELU()
         self.norm = build_norm_layer(norm_cfg, ebdim)[1]
         self.conv = nn.Conv2d(ebdim, ebdim, kernel_size=3, padding=1)
-
+        self.drop_path = DropPath(drop_path)
+        self.mlp = FFN(ebdim, int(ebdim * mlp_ratio))
+        self.cpe1 = nn.Conv2d(ebdim, ebdim, kernel_size=3, padding=1, groups=ebdim)
+        self.cpe2 = nn.Conv2d(ebdim, ebdim, kernel_size=3, padding=1, groups=ebdim)
+        self.norm2 = LayerNorm2d(ebdim)
     
-    def forward(self, x):
+    def forward_attn(self, x):
         b, c, h, w = x.shape
-        v_r = x
-        v = self.act(self.dwconv(v_r))
+        v = self.act(self.dwconv(x))
         v = self.ssm(v)
         v = v.permute(0, 2, 1)
         v = self.norm(v)
         v = v.permute(0, 2, 1).reshape((b, -1, h, w))
-        x = v_r + v
+        x = v + x
+        return x
+    
+    def forward(self, x):
+        x = x + self.cpe1(x)
+        v = self.forward_attn(x)
+        x = x + self.drop_path(v)
+        x = x + self.cpe2(x)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
 @HEADS.register_module()
@@ -165,30 +177,32 @@ class MixHead(BaseDecodeHead):
         self.in_index = in_index[::-1]
         self.in_channels = in_channels[::-1]
         self.num_heads = num_heads[::-1]
+        
         self.drop_path_rates = [x.item() for x in torch.linspace(0, drop_path_rate, self.num_features)][::-1]
         self.mlp_ratios = mlp_ratios[::-1]
+
         ## 高频特征增强
         ## 特征位置编码与可学习变量
-        for i_layer in self.in_index:
+        for i_layer in range(self.num_features):
             self.ffts.append(HFFTAttention(self.in_channels[i_layer], norm_cfg))
             self.level_embeds.append(nn.Embedding(1, self.in_channels[i_layer]))
-            self.convert.append(nn.Conv2d(self.in_channels[i_layer], channels, 3, 1))
+            self.convert.append(nn.Conv2d(self.in_channels[i_layer], channels, 3, 1, 1))
             self.ffts_2.append(HFFTAttention(channels, norm_cfg))
-            self.ssd.append(SSD(channels))
+            self.ssd.append(SSD(channels, mlp_ratio=self.mlp_ratios[i_layer], drop_path=self.drop_path_rates[i_layer]))
         ## 特征交叉查询补足
         ## 上采样 拼接 
         for i, dim in enumerate(self.in_channels[:-1]):
             lvl_block = CrossBlock(self.in_channels[i + 1:], self.in_channels[i], self.num_heads[i], self.mlp_ratios[i], self.drop_path_rates[i])
             up = UpSample(self.in_channels[i], self.in_channels[i + 1])
-            cat = nn.Conv2d(2 * self.in_channels[i + 1], self.in_channels[i + 1], 3, 1)
+            cat = nn.Conv2d(2 * self.in_channels[i + 1], self.in_channels[i + 1], 3, 1, 1)
             self.lvl_cross.append(lvl_block)
             self.lvl_cross.append(up)
             self.lvl_cross.append(cat)
             ## 全局特征联系 ssd
         self.lvl_cross.append(SelfBlock(self.in_channels[-1], self.num_heads[-1], self.mlp_ratios[-1], self.drop_path_rates[-1]))
         ## 特征融合输出
-        self.fuse = nn.Conv2d(self.num_features * channels, channels, 3, 1)
-        self.norm = build_norm_layer(norm_cfg, channels)[0]
+        self.fuse = nn.Conv2d(self.num_features * channels, channels, 3, 1, 1)
+        self.norm = build_norm_layer(norm_cfg, channels)[1]
         self.act = nn.GELU()
         self.apply(self._init_weights)
     
@@ -211,7 +225,7 @@ class MixHead(BaseDecodeHead):
             nn.init.zeros_(m.bias)
     
     def _forward_feature(self, inputs):
-        inputs = self._transform_inputs(inputs)
+        # inputs = self._transform_inputs(inputs)
         assert self.num_features == len(inputs), f"self.num_features :{self.num_features} not equal numbers of inputs:{len(inputs)}"
         inputs = inputs[::-1]
         for i_layer in range(self.num_features):
