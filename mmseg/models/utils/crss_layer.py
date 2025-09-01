@@ -851,32 +851,33 @@ class CrossBlock(nn.Module):
 
 ### 高通滤波
 ### cross attention
+MIN_DIM = 16
 class SplitCross(nn.Module):
     def __init__(self, in_channels, ebdim, n_head, mlp_ratio, drop_path_rate, kernel_size=7, reduction = 16, norm_cfg=dict(type='SyncBN', requires_grad=True)):
         super().__init__()
         self.num_features = len(in_channels)
         self.num_head = n_head
         self.low_rope = RoPE(ebdim, n_head)
-        self.high_rope = RoPE(1, 1)
+        self.high_rope = RoPE(MIN_DIM, 1)
 
         self.Hsplit = SFourierHiggTransform()
         ## 低高频交叉查询
         self.low_q = nn.Conv2d(ebdim, ebdim, 1)
         self.low_kv = nn.ModuleList()
         
-        self.high_q = nn.Conv2d(1, 1, 1)
+        self.high_q = nn.Conv2d(ebdim, MIN_DIM, 1)
         self.high_kv = nn.ModuleList()
         self.alpha = nn.Parameter(torch.ones(self.num_features))  # 标量
         self.beta = nn.Parameter(torch.ones(self.num_features))       # 向量
 
         for i, in_channel in enumerate(in_channels):
-            low_kv = nn.Conv2d(1, 2, 1)
+            low_kv = nn.Conv2d(ebdim, 2 * ebdim, 1)
             self.low_kv.append(low_kv)
-            high_kv = nn.Conv2d(1, 2, 1)
+            high_kv = nn.Conv2d(in_channel, 2 * MIN_DIM, 1)
             self.high_kv.append(high_kv)
 
         self.low_cross = CrossAttention(ebdim, n_head, 0, drop_path_rate)
-        self.high_cross = CrossAttention(1, 1, 0, drop_path_rate)
+        self.high_cross = CrossAttention(MIN_DIM, 1, 0, drop_path_rate)
         self.ffn = FFN(ebdim, int(ebdim * mlp_ratio))
 
         # mul layers mixer
@@ -886,54 +887,58 @@ class SplitCross(nn.Module):
         self.act = nn.GELU()
         
         
-    def apply_rotateEnc(self, x, sin, cos, b, c, h, w):
-        x = x.reshape((b, h, w, self.num_head, -1)).permute((0, 3, 1, 2, 4)).contiguous()
+    def apply_rotateEnc(self, x, sin, cos, b, c, h, w, num_head=1):
+        x = x.reshape((b, h, w, num_head, -1)).permute((0, 3, 1, 2, 4)).contiguous()
         x = theta_shift(x, sin, cos).permute((0, 2, 3, 1, 4)).contiguous().reshape((b, h * w, c)) # 旋转编码
         return x
 
     def forward(self, x, inputs):
         b, c, h, w = x.shape
         # split high
+        # print(f"x: {x.shape}")
         high = self.Hsplit(x)
-        high = torch.mean(high, dim=1, keepdim=True)
+        # print(f"high: {high.shape}")
+        
         low_sin, low_cos = self.low_rope((h, w))
         high_sin, high_cos = self.high_rope((h, w))
         
         # low frequence
         low_q = self.low_q(x) # query
         low_q = low_q.permute((0, 2, 3, 1))
-        low_q = self.apply_rotateEnc(low_q, low_sin, low_cos, b, c, h, w)
+        low_q = self.apply_rotateEnc(low_q, low_sin, low_cos, b, c, h, w, self.num_head)
         low_q = low_q.transpose(1, 2).reshape((b, c, h, w))
         # high frequence
         high_q = self.high_q(high) # query
         high_q = high_q.permute((0, 2, 3, 1))
-        high_q = self.apply_rotateEnc(high_q, high_sin, high_cos, b , 1, h, w)
-        high_q = high_q.transpose(1, 2).reshape((b, 1, h, w))
+        high_q = self.apply_rotateEnc(high_q, high_sin, high_cos, b, MIN_DIM, h, w)
+        high_q = high_q.transpose(1, 2).reshape((b, MIN_DIM, h, w))
 
         rs = []
         for i_layer in range(self.num_features):
             y = inputs[i_layer]
             _, _ , h1, w1 = y.shape
+            high_sin, high_cos = self.high_rope((h1, w1))
+            # high frequence
+            y_h = self.Hsplit(y)
+            
+            kv_h = self.high_kv[i_layer](y_h)
+            kv_h = kv_h.permute((0, 2, 3, 1))
+            k_h, v_h = kv_h.split(MIN_DIM, dim=-1)
+            v_h = v_h.reshape((b, h1 * w1, -1))
+            k_h = self.apply_rotateEnc(k_h, high_sin, high_cos, b, MIN_DIM, h1, w1)
+
             # low frequence
             y = F.interpolate(y, size=(h, w), mode='bilinear', align_corners=False)
-            kv = self.kv_proj[i_layer](y)
+            kv = self.low_kv[i_layer](y)
             kv = kv.permute((0, 2, 3, 1))
             k, v = kv.split(c, dim=-1)
             v = v.reshape((b, h * w, -1))
-            k = self.apply_rotateEnc(k, sin, cos, b, c, h, w)
-            # high frequence
-            y_h = self.Hsplit(y)
-            y_h = torch.mean(y_h, dim=1, keepdim=True)
-            kv_h = self.high_kv[i_layer](y_h)
-            kv_h = kv_h.permute((0, 2, 3, 1))
-            k_h, v_h = kv_h.split(1, dim=-1)
-            v_h = v_h.reshape((b, h * w, -1))
-            k_h = self.apply_rotateEnc(k_h, high_sin, high_cos, b, 1, h, w)
-
+            k = self.apply_rotateEnc(k, low_sin, low_cos, b, c, h, w, self.num_head)
+            
             # cross attention
             low_out = self.low_cross(low_q, k, v)
-            high_out = self.high_cross(high_q, k_h, v_h)
-            out = self.alpha[i_layer] low_out + self.beta[i_layer] * high_out
+            high_out = self.high_cross(high_q, k_h, v_h).mean(dim=1, keepdim=True)
+            out = self.alpha[i_layer] * low_out + self.beta[i_layer] * high_out
             out = out + self.ffn(out)
             rs.append(out)
         ## balance sum
