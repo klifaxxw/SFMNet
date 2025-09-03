@@ -14,9 +14,9 @@ import numpy as np
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Convert potsdam dataset to mmsegmentation format')
-    parser.add_argument('dataset_path', help='potsdam folder path')
-    parser.add_argument('--tmp_dir', help='path of the temporary directory')
-    parser.add_argument('-o', '--out_dir', help='output path')
+    parser.add_argument('--dataset_path', default="/home/dell/x/model/data/potsdam", help='potsdam folder path')
+    parser.add_argument('--tmp_dir', default="/home/dell/x/model/data/potsdam", help='path of the temporary directory')
+    parser.add_argument('-o', '--out_dir', default="/home/dell/x/model/data/potsdam", help='output path')
     parser.add_argument(
         '--clip_size',
         type=int,
@@ -103,14 +103,15 @@ def main():
         'train': [
             '2_10', '2_11', '2_12', '3_10', '3_11', '3_12', '4_10', '4_11',
             '4_12', '5_10', '5_11', '5_12', '6_10', '6_11', '6_12', '6_7',
-            '6_8', '6_9', '7_10', '7_11', '7_12', '7_7', '7_8', '7_9'
+            '6_8', '6_9', '7_11', '7_12', '7_7', '7_8', '7_9', '5_14'
         ],
         'val': [
-            '5_15', '6_15', '6_13', '3_13', '4_14', '6_14', '5_14', '2_13',
-            '4_15', '2_14', '5_13', '4_13', '3_14', '7_13'
+            '2_13', '2_14', '3_13', '3_14','5_15', '6_15', '6_13', '4_14', '6_14',
+            '4_15', '5_13', '4_13', '7_13'
         ]
+        
     }
-
+    # "7_10" 存在问题舍去
     dataset_path = args.dataset_path
     if args.out_dir is None:
         out_dir = osp.join('data', 'potsdam')
@@ -142,7 +143,7 @@ def main():
                     'train'] else 'val'
                 if 'label' in src_path:
                     dst_dir = osp.join(out_dir, 'ann_dir', data_type)
-                    clip_big_image(src_path, dst_dir, args, to_label=True)
+                    clip_big_image(src_path, dst_dir, args, to_label=False)
                 else:
                     dst_dir = osp.join(out_dir, 'img_dir', data_type)
                     clip_big_image(src_path, dst_dir, args, to_label=False)

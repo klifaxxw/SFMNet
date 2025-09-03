@@ -139,12 +139,12 @@ def main():
                 data_type = 'train' if area_idx in splits['train'] else 'val'
                 if 'noBoundary' in src_path:
                     dst_dir = osp.join(out_dir, 'ann_dir', data_type)
-                    clip_big_image(src_path, dst_dir, to_label=True)
+                    clip_big_image(src_path, dst_dir, to_label=False)
                 else:
                     dst_dir = osp.join(out_dir, 'img_dir', data_type)
                     clip_big_image(src_path, dst_dir, to_label=False)
                 prog_bar.update()
-
+        
         print('Removing the temporary files...')
 
     print('Done!')

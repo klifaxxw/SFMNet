@@ -23,3 +23,4 @@ class PotsdamDataset(CustomDataset):
             seg_map_suffix='.png',
             reduce_zero_label=True,
             **kwargs)
+

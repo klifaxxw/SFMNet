@@ -860,25 +860,30 @@ class SplitCross(nn.Module):
         self.low_rope = RoPE(ebdim, n_head)
         self.high_rope = RoPE(MIN_DIM, 1)
 
-        self.Hsplit = SFourierHiggTransform()
+        self.Hsplit = SFourierHiggTransform(mode="constant")
         ## 低高频交叉查询
         self.low_q = nn.Conv2d(ebdim, ebdim, 1)
         self.low_kv = nn.ModuleList()
         
         self.high_q = nn.Conv2d(ebdim, MIN_DIM, 1)
         self.high_kv = nn.ModuleList()
-        self.alpha = nn.Parameter(torch.ones(self.num_features))  # 标量
-        self.beta = nn.Parameter(torch.ones(self.num_features))       # 向量
+        self.ccr = nn.ModuleList()
+        # self.alpha = nn.Parameter(torch.ones(self.num_features))  # 标量
+        self.beta = nn.Parameter(torch.ones(self.num_features)) * 0.5      # 向量
+
+        
 
         for i, in_channel in enumerate(in_channels):
             low_kv = nn.Conv2d(ebdim, 2 * ebdim, 1)
             self.low_kv.append(low_kv)
             high_kv = nn.Conv2d(in_channel, 2 * MIN_DIM, 1)
             self.high_kv.append(high_kv)
+            self.ccr.append(nn.Conv2d(MIN_DIM, ebdim, 1))
 
         self.low_cross = CrossAttention(ebdim, n_head, 0, drop_path_rate)
         self.high_cross = CrossAttention(MIN_DIM, 1, 0, drop_path_rate)
         self.ffn = FFN(ebdim, int(ebdim * mlp_ratio))
+        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0 else nn.Identity()
 
         # mul layers mixer
         self.conv = nn.Conv2d(2, 1, kernel_size, padding=autopad(kernel_size), bias=False)
@@ -937,9 +942,10 @@ class SplitCross(nn.Module):
             
             # cross attention
             low_out = self.low_cross(low_q, k, v)
-            high_out = self.high_cross(high_q, k_h, v_h).mean(dim=1, keepdim=True)
-            out = self.alpha[i_layer] * low_out + self.beta[i_layer] * high_out
-            out = out + self.ffn(out)
+            high_out = self.high_cross(high_q, k_h, v_h)
+            high_out = self.ccr[i_layer](high_out)
+            out =  low_out + 0.5 * high_out
+            out = out + self.drop_path(self.ffn(out))
             rs.append(out)
         ## balance sum
         rs = torch.stack(rs, dim=1) ## bs, num_features, c, h, w

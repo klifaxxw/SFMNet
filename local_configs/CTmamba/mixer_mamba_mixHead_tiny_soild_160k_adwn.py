@@ -65,7 +65,7 @@ evaluation = dict(interval=3000, metric='mIoU')
 checkpoint_config = dict(by_epoch=False, interval=3000)
 runner = dict(type='IterBasedRunner', max_iters=44000)
 # optimizer
-optimizer = dict(_delete_=True, type='AdamW', lr=1e-5, betas=(0.9, 0.999), weight_decay=0.01,
+optimizer = dict(_delete_=True, type='AdamW', lr=4e-5, betas=(0.9, 0.999), weight_decay=0.01,
                  paramwise_cfg=dict(custom_keys={'norm': dict(decay_mult=0.),
                                                 'A_log':dict(decay_mult=0.0),  # 禁用 A_log 的权重衰减
                                                 'D': dict(decay_mult=0.0),  # 禁用 D 的权重衰减
