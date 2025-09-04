@@ -4,11 +4,11 @@ segmentron/solver/loss.py (Apache-2.0 License)"""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import warnings
 from ..builder import LOSSES
 from .utils import get_class_weight, weighted_loss
-from ..cross_entropy_loss import cross_entropy
-from ..dice_loss import dice_loss, binary_dice_loss
+from .cross_entropy_loss import cross_entropy
+from .dice_loss import dice_loss, binary_dice_loss
 from mmseg.utils import get_root_logger
 
 def sobel_edges(x):
@@ -24,16 +24,17 @@ def sobel_edges(x):
 # 因为将背景类也作为学习目标，因此这里从1开始
 # 否则，应该从0开始
 @weighted_loss
-def boundary_bce_loss(pred, target,class_weight=None,
+def boundary_bce_loss(pred, target, class_weight=None,
                   ignore_index=255):
     B, C, H, W = pred.shape
     total_loss = 0.0
     count = 0
+    target = target.permute(0, 3, 1, 2).float()  # B, C, H, W
     # Iterate over each class
     for c in range(1, C):
         if c == ignore_index:
             continue
-        edge = sobel_edges(target_onehot[...., c:c + 1])
+        edge = sobel_edges(target[:, c:c + 1, :, :])
         pred_c = pred[:, c:c + 1, :, :]
         # If there are edges, calculate BCE loss
         if edge.sum() > 0:
@@ -65,7 +66,7 @@ class MixLoss(nn.Module):
                  avg_non_ignore=False,
                  total_iters=None,
                  **kwards):
-        super(DiceLoss, self).__init__()
+        super(MixLoss, self).__init__()
         assert isinstance(loss_weight, list), "loss_weight 必须是 list 类型"
         assert len(loss_weight) == 2, "loss_weight 长度必须为 2"
 
@@ -99,7 +100,7 @@ class MixLoss(nn.Module):
                 avg_factor=None,
                 reduction_override=None,
                 ignore_index=-100,
-                **kwards):
+                **kwargs):
         assert reduction_override in (None, 'none', 'mean', 'sum')
         self.iter_count = self.iter_count + 1
         reduction = (
@@ -127,15 +128,14 @@ class MixLoss(nn.Module):
         one_hot_target = F.one_hot(
             torch.clamp(target.long(), 0, num_classes - 1),
             num_classes=num_classes)
-        
+        pred_d = torch.sigmoid(pred) 
         boundary_loss = self.boundary_criterion(
-            pred,
+            pred_d,
             one_hot_target,
             reduction=reduction,
             avg_factor=avg_factor,
             class_weight=class_weight,
             ignore_index=self.ignore_index)
-
         pred = F.softmax(pred, dim=1) 
         area_loss = self.area_criterion(
             pred,
@@ -149,12 +149,13 @@ class MixLoss(nn.Module):
             ignore_index=self.ignore_index)
         alpha = 1 - (self.iter_count / self.total_iters)
         beta = 1 - alpha
-        loss = piexl_loss + self.loss_weight[1](alpha * area_loss + beta * boundary_loss)
-        self.logger.info(
-                f"[Iter {self.iter_count}] piexl_loss: {piexl_loss.item():.4f}, "
-                f"area_loss: {area_loss.item():.4f}, "
-                f"boundary_loss: {boundary_loss.item():.4f}, "
-                f"total_loss: {loss.item():.4f}"
+        loss = piexl_loss + self.loss_weight[1] * (alpha * area_loss + beta * boundary_loss)
+        if self.iter_count % 100 == 0:
+            self.logger.info(
+                f"[Iter {self.iter_count}] piexl_loss: {piexl_loss.detach().cpu().item():.4f}, "
+                f"area_loss: {area_loss.detach().cpu().item():.4f}, "
+                f"boundary_loss: {boundary_loss.detach().cpu().item():.4f}, "
+                f"total_loss: {loss.detach().cpu().item():.4f}"
             )
         return loss
 

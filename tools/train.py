@@ -30,9 +30,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
     parser.add_argument('--config', default="local_configs/CTmamba/mixer_mamba_mixHead_tiny_soild_160k_adwn.py", help='train config file path')
     # Umamba_tiny
-    parser.add_argument('--work-dir', default="runs/mix_10", help='the dir to save logs and models')
+    parser.add_argument('--work-dir', default="runs/mix_11", help='the dir to save logs and models')
     parser.add_argument(
-        '--load-from', default="runs/mix_9/best_mIoU_iter_15000.pth", help='the checkpoint file to load weights from')
+        '--load-from', default="runs/mix_5/best_mIoU_iter_12000.pth", help='the checkpoint file to load weights from')
     parser.add_argument(
         '--resume-from', default=None,  help='the checkpoint file to resume from')
     parser.add_argument(
