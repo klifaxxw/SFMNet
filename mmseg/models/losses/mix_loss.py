@@ -147,8 +147,9 @@ class MixLoss(nn.Module):
             exponent=self.exponent,
             class_weight=class_weight,
             ignore_index=self.ignore_index)
-        alpha = 1 - (self.iter_count / self.total_iters)
-        beta = 1 - alpha
+        alpha = 0.8 - (self.iter_count / self.total_iters) * 0.8
+        beta = 0.8 - alpha
+        alpha += 0.2
         loss = piexl_loss + self.loss_weight[1] * (alpha * area_loss + beta * boundary_loss)
         if self.iter_count % 100 == 0:
             self.logger.info(
@@ -158,7 +159,7 @@ class MixLoss(nn.Module):
                 f"total_loss: {loss.detach().cpu().item():.4f}"
             )
         return loss
-
+    
     @property
     def loss_name(self):
         """Loss Name.

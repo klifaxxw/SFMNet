@@ -31,6 +31,9 @@ from .uper_head import UPerHead
 from .ham_head import LightHamHead
 from .MambaUD import MambaUD
 from .mix_head import MixHead
+from .rs_head import RSMHead
+from .vm_head import VMUHead
+from .rs3m_head import RS3MHead
 
 __all__ = [
     'FCNHead', 'PSPHead', 'ASPPHead', 'PSAHead', 'NLHead', 'GCHead', 'CCHead',
@@ -39,5 +42,6 @@ __all__ = [
     'PointHead', 'APCHead', 'DMHead', 'LRASPPHead', 'SETRUPHead',
     'SETRMLAHead', 'DPTHead', 'SETRMLAHead', 'SegmenterMaskTransformerHead',
     'SegformerHead', 'ISAHead', 'STDCHead', 'IterativeDecodeHead',
-    'KernelUpdateHead', 'KernelUpdator', 'LightHamHead', "MambaUD", "MixHead"
+    'KernelUpdateHead', 'KernelUpdator', 'LightHamHead', "MambaUD",
+    "RSMHead", "RS3MHead", "MixHead"
 ]

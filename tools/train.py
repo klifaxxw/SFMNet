@@ -28,11 +28,11 @@ from mmseg.utils import (collect_env, get_device, get_root_logger,
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
-    parser.add_argument('--config', default="local_configs/CTmamba/mixer_mamba_mixHead_tiny_soild_160k_adwn.py", help='train config file path')
+    parser.add_argument('--config', default="local_configs/versus/vm_unet_potsdam_160k.py", help='train config file path')
     # Umamba_tiny
-    parser.add_argument('--work-dir', default="runs/mix_11", help='the dir to save logs and models')
+    parser.add_argument('--work-dir', default="runs1/vm_unet_potsdam", help='the dir to save logs and models')
     parser.add_argument(
-        '--load-from', default="runs/mix_5/best_mIoU_iter_12000.pth", help='the checkpoint file to load weights from')
+        '--load-from', default=None, help='the checkpoint file to load weights from')
     parser.add_argument(
         '--resume-from', default=None,  help='the checkpoint file to resume from')
     parser.add_argument(

@@ -125,4 +125,5 @@ mmseg/.mim
 *yaml
 *csv
 runs/
+runs1/
 demo/

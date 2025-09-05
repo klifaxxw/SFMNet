@@ -143,7 +143,7 @@ def main():
                     'train'] else 'val'
                 if 'label' in src_path:
                     dst_dir = osp.join(out_dir, 'ann_dir', data_type)
-                    clip_big_image(src_path, dst_dir, args, to_label=False)
+                    clip_big_image(src_path, dst_dir, args, to_label=True)
                 else:
                     dst_dir = osp.join(out_dir, 'img_dir', data_type)
                     clip_big_image(src_path, dst_dir, args, to_label=False)
