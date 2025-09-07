@@ -632,7 +632,7 @@ class SwinTransformer(nn.Module):
                 out = reshape(x_out, H, W, self.num_features[i])
                 outs.append(out)
 
-        return tuple(outs)
+        return outs
 
     def train(self, mode=True):
         """Convert the model into training mode while keep layers freezed."""

@@ -115,16 +115,6 @@ class AttentionModule(nn.Module):
         reference_points = self.get_reference_points(spatial_shape[0], valid_ratio, x.device).repeat(1, self.num_features, 1)
         # mul local features
         mul_features = self.extract_features(x)
-        # poss = []
-        #   # bs, h * w, c
-        # pos_enc = pos_enc.flatten(2).transpose(1, 2).contiguous()
-        # for i in range(self.num_features):
-        #     l_pos = self.level_embed[i].view(1, 1, -1).contiguous()
-        #     pos = pos_enc + l_pos
-        #     poss.append(pos)
-        # # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
-        # feature_pos = torch.cat(poss, dim=1)
-        # bs, h1 * w1 + h2 * w2 + ... + h_feature_n * w_feature_n, c
         src = torch.stack(mul_features, dim=2).flatten(3).flatten(2).transpose(1, 2).contiguous()
         spatial_shape = torch.tensor(spatial_shape, dtype=torch.int32, device=x.device)
         attn = self.deformAttn(self.with_pos_embed(src, pos_enc), reference_points, src, spatial_shape)
@@ -145,7 +135,7 @@ class MixAttention(nn.Module):
         self.dwconv = nn.Sequential(
                 nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim),
                 nn.BatchNorm2d(embed_dim),
-        )
+                )
         self.act = nn.GELU()
         self.norm1 = build_norm_layer(norm_cfg, embed_dim)[1]
         self.proj = nn.Conv2d(embed_dim, embed_dim, kernel_size=1)
@@ -359,6 +349,4 @@ class mixer(BaseModule):
             x = x.transpose(1, 2).contiguous().reshape((b, c, h, w))
             if i_layer in self.out_indices:
                 outs.append(x)
-                # print("*"*50)
-                # print(x.shape)
         return outs

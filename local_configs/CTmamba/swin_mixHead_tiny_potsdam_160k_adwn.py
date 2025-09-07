@@ -1,0 +1,79 @@
+_base_ = [
+    "../_base_/datasets/potsdam.py",
+    "../_base_/default_runtime.py",
+    "../_base_/schedules/schedule_160k_adamw.py",
+]
+
+# model settings
+norm_cfg = dict(type='SyncBN', requires_grad=True)
+total_iters = 36000
+model = dict(
+    type='EncoderDecoder',
+    pretrained=None,
+    backbone=dict(
+        type='SwinTransformer',
+        embed_dim=96,
+        depths=[2, 2, 6, 2],
+        num_heads=[3, 6, 12, 24],
+        window_size=7,
+        mlp_ratio=4.,
+        qkv_bias=True,
+        qk_scale=None,
+        drop_rate=0.,
+        attn_drop_rate=0.,
+        drop_path_rate=0.3,
+        ape=False,
+        patch_norm=True,
+        out_indices=(0, 1, 2, 3),
+        use_checkpoint=False),
+    decode_head=dict(
+        type='MixHead',
+        in_channels=[96, 192, 384, 768],
+        num_heads=[2, 4, 8, 16],
+        mlp_ratios=[1, 1, 1, 1],
+        in_index=[0, 1, 2, 3],
+        channels=256,
+        drop_path_rate=0.08,
+        num_classes=6,
+        norm_cfg=norm_cfg,
+        align_corners=False,
+        # loss_decode=dict(
+        #     type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
+        loss_decode=dict(
+            type='MixLoss', loss_weight=[1.0, 0.5], total_iters=total_iters)),
+    auxiliary_head=dict(
+        type='FCNHead',
+        in_channels=384,
+        in_index=2,
+        channels=256,
+        num_convs=1,
+        concat_input=False,
+        dropout_ratio=0.1,
+        num_classes=6,
+        norm_cfg=norm_cfg,
+        align_corners=False,
+        loss_decode=dict(
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.4)),
+    # model training and testing settings
+    train_cfg=dict(),
+    test_cfg=dict(mode='whole'))
+
+data = dict(samples_per_gpu=8)
+evaluation = dict(interval=3000, metric='mIoU')
+checkpoint_config = dict(by_epoch=False, interval=3000)
+runner = dict(type='IterBasedRunner', max_iters=total_iters)
+# optimizer
+optimizer = dict(_delete_=True, type='AdamW', lr=6e-5, betas=(0.9, 0.999), weight_decay=0.01,
+                 paramwise_cfg=dict(custom_keys={
+                                                'absolute_pos_embed': dict(decay_mult=0.),
+                                                'relative_position_bias_table': dict(decay_mult=0.),
+                                                'norm': dict(decay_mult=0.),
+                                                'A_log':dict(decay_mult=0.0),  # 禁用 A_log 的权重衰减
+                                                'D': dict(decay_mult=0.0),  # 禁用 D 的权重衰减
+                                                 }))
+lr_config = dict(_delete_=True, policy='poly',
+                 warmup='linear',
+                 warmup_iters=1500,
+                 warmup_ratio=1e-6,
+                 power=1.0, min_lr=0.0, by_epoch=False)
+find_unused_parameters = True

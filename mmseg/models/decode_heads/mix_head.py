@@ -8,6 +8,7 @@ import math
 from timm.models.layers import  trunc_normal_
 from mmseg.utils.logger import get_root_logger
 from mmseg.ops import resize
+from packaging import version
 
 
 class Reshape(nn.Module):
@@ -19,6 +20,16 @@ class Reshape(nn.Module):
         y = x.permute((0, 3, 1, 2))
         return y
 
+
+def load_ckpt(ckpt_path):
+    torch_version = torch.__version__
+    if version.parse(torch_version) >= version.parse("2.0.0"):
+        ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+        print(f"Loaded checkpoint with weights_only=True (PyTorch {torch_version})")
+    else:
+        ckpt = torch.load(ckpt_path, map_location='cpu')
+        print(f"Loaded checkpoint without weights_only (PyTorch {torch_version})")
+    return ckpt
 
 @HEADS.register_module()
 class MixHead(BaseDecodeHead):
@@ -34,6 +45,7 @@ class MixHead(BaseDecodeHead):
                  channels=256,
                  drop_path_rate=0.08,
                  norm_cfg=dict(type='SyncBN', requires_grad=True),
+                 ckpt_path="weights/mix_ade_pretrained.pth",
                  align_corners=False,
                  **kwargs):
         super().__init__(num_classes=num_classes,
@@ -82,6 +94,7 @@ class MixHead(BaseDecodeHead):
         self.norm = build_norm_layer(norm_cfg, channels)[1]
         self.act = nn.GELU()
         self.apply(self._init_weights)
+        self.load_pretrained_ckpt(ckpt_path)
     
     def _init_weights(self, m):
         if getattr(m, "_no_reinit", False) or (hasattr(m, 'bias') and getattr(m.bias, '_no_reinit', False)):
@@ -101,6 +114,25 @@ class MixHead(BaseDecodeHead):
             nn.init.ones_(m.weight)
             nn.init.zeros_(m.bias)
     
+    def load_pretrained_ckpt(self, ckpt_path=None):
+        if ckpt_path is None:
+            return
+        ckpt = load_ckpt(ckpt_path)
+        model_dict = self.state_dict()
+        pretrained_dict = ckpt['state_dict']
+        # 过滤操作
+        new_dict = {}
+        for k, v in pretrained_dict.items():
+            if k.startswith("decode_head."):
+                k = k.replace("decode_head.", "")
+                if k in model_dict.keys() and model_dict[k].shape == v.shape:
+                    new_dict[k] = v
+        model_dict.update(new_dict)
+        # 打印出来，更新了多少的参数
+        print('Total model_dict: {}, Total pretrained_dict: {}, update: {}'.format(len(model_dict), len(pretrained_dict), len(new_dict)))
+        self.load_state_dict(model_dict)
+    
+
     def _forward_feature(self, inputs):
         # inputs = self._transform_inputs(inputs)
         assert self.num_features == len(inputs), f"self.num_features :{self.num_features} not equal numbers of inputs:{len(inputs)}"

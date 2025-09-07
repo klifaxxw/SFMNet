@@ -1,10 +1,10 @@
 _base_ = [
-    '../_base_/models/upernet_swin.py', '../_base_/datasets/',
-    '../_base_/default_runtime.py', '../_base_/schedules/schedule_160k.py'
+    '../_base_/models/upernet_swin.py', "../_base_/datasets/potsdam.py",
+    '../_base_/default_runtime.py', "../_base_/schedules/schedule_160k_adamw.py",
 ]
 
 norm_cfg = dict(type='SyncBN', requires_grad=True)
-total_iters = 32000
+total_iters = 36000
 model = dict(
     backbone=dict(
         embed_dim=96,
