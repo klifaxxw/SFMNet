@@ -6,7 +6,7 @@ _base_ = [
 
 # model settings
 norm_cfg = dict(type='SyncBN', requires_grad=True)
-total_iters = 44000
+total_iters = 36000
 model = dict(
     type='EncoderDecoder',
     pretrained=None,
@@ -42,10 +42,10 @@ model = dict(
         num_classes=6,
         norm_cfg=norm_cfg,
         align_corners=False,
-        loss_decode=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
         # loss_decode=dict(
-        #     type='MixLoss', loss_weight=[1.0, 0.5], total_iters=total_iters)),
+        #     type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
+        loss_decode=dict(
+            type='MixLoss', loss_weight=[1.0, 0.5], total_iters=total_iters)),
     auxiliary_head=dict(
         type='FCNHead',
         in_channels=288,
@@ -63,7 +63,7 @@ model = dict(
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
 
-data = dict(samples_per_gpu=6)
+data = dict(samples_per_gpu=8)
 evaluation = dict(interval=3000, metric='mIoU')
 checkpoint_config = dict(by_epoch=False, interval=3000)
 runner = dict(type='IterBasedRunner', max_iters=total_iters)

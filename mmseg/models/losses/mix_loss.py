@@ -16,10 +16,9 @@ def sobel_edges(x):
     kernel_y = torch.tensor([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], dtype=torch.float32, device=x.device).view(1, 1, 3, 3)
     grad_x = F.conv2d(x, kernel_x, padding=1)
     grad_y = F.conv2d(x, kernel_y, padding=1)
-    edge = torch.sqrt(grad_x ** 2 + grad_y ** 2 + 1e-6)
+    edge = torch.sqrt(grad_x ** 2 + grad_y ** 2)
     edge = (edge > 0).float()
     return edge
-
 
 # 因为将背景类也作为学习目标，因此这里从1开始
 # 否则，应该从0开始
@@ -29,13 +28,17 @@ def boundary_bce_loss(pred, target, class_weight=None,
     B, C, H, W = pred.shape
     total_loss = 0.0
     count = 0
-    target = target.permute(0, 3, 1, 2).float()  # B, C, H, W
+    target = target.permute(0, 3, 1, 2).contiguous().float()  # B, C, H, W
     # Iterate over each class
     for c in range(1, C):
         if c == ignore_index:
             continue
         edge = sobel_edges(target[:, c:c + 1, :, :])
-        pred_c = pred[:, c:c + 1, :, :]
+        pred_c = pred[:, c:c + 1, :, :].contiguous().float()
+        if not torch.isfinite(pred_c).all():
+            raise RuntimeError("pred contains NaN/Inf")
+        if not torch.isfinite(edge).all():
+            raise RuntimeError("edge contains NaN/Inf")
         # If there are edges, calculate BCE loss
         if edge.sum() > 0:
             loss = F.binary_cross_entropy(pred_c * edge, edge, reduction='none')

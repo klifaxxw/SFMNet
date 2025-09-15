@@ -20,7 +20,6 @@ class Reshape(nn.Module):
         y = x.permute((0, 3, 1, 2))
         return y
 
-
 def load_ckpt(ckpt_path):
     torch_version = torch.__version__
     if version.parse(torch_version) >= version.parse("2.0.0"):
@@ -79,7 +78,7 @@ class MixHead(BaseDecodeHead):
         # 特征交叉查询补足
         # 上采样 拼接
         for i, dim in enumerate(self.in_channels[:-1]):
-            lvl_block = SplitCross(self.in_channels[i + 1:], self.in_channels[i], self.num_heads[i], self.mlp_ratios[i], self.drop_path_rates[i])
+            lvl_block = SplitCross(self.in_channels[i + 1:i + 2], self.in_channels[i], self.num_heads[i], self.mlp_ratios[i], self.drop_path_rates[i])
             up = UpSample()
             cat = nn.Conv2d(self.in_channels[i] + self.in_channels[i + 1], self.in_channels[i + 1], 3, 1, 1)
             self.lvl_cross.append(lvl_block)
@@ -147,7 +146,7 @@ class MixHead(BaseDecodeHead):
         for i_layer in range(self.num_features - 1):
             x = inputs[i_layer]
             x_pre = inputs[i_layer + 1]
-            y = inputs[i_layer + 1:]
+            y = inputs[i_layer + 1: i_layer + 2]
             x = self.lvl_cross[i_layer * 3](x, y)
             inputs[i_layer] = self.ffts_2[i_layer](inputs[i_layer])
             # inputs[i_layer] = self.ssd[i_layer](inputs[i_layer])

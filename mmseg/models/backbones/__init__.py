@@ -29,6 +29,7 @@ from .rsm import RSMBackbone
 from .rs3m import RS3MBackbone
 from .vm import VMUBackbone
 from .mix import mixer
+from .cswin import CSWin
 
 __all__ = [
     'ResNet', 'ResNetV1c', 'ResNetV1d', 'ResNeXt', 'HRNet', 'FastSCNN',
@@ -37,6 +38,6 @@ __all__ = [
     'BiSeNetV1', 'BiSeNetV2', 'ICNet', 'TIMMBackbone', 'ERFNet', 'PCPVT',
     'SVT', 'STDCNet', 'STDCContextPathNet', 'BEiT', 'MAE',
     'MSCAN', "MambaUE", "CCrossTransformer", 'SwinTransformer',
-    "RSMBackbone", "VMUBackbone", 
+    "RSMBackbone", "VMUBackbone", "CSWin",
     "RS3MBackbone", 'MambaBackbone', 'mixer'
 ]

@@ -129,8 +129,8 @@ class MixAttention(nn.Module):
     def __init__(self, embed_dim, num_heads, num_points=4, ssm_ratio=1, global_mode=True, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
         super(MixAttention, self).__init__()
         self.embed_dim = embed_dim
-        self.attn = AttentionModule(embed_dim, num_heads, num_points, kernels=kernels, norm_cfg=norm_cfg)
-        self.norm = build_norm_layer(norm_cfg, embed_dim)[1]
+        # self.attn = AttentionModule(embed_dim, num_heads, num_points, kernels=kernels, norm_cfg=norm_cfg)
+        # self.norm = build_norm_layer(norm_cfg, embed_dim)[1]
         self.ssm = VSSM(d_model=embed_dim, expansion_ratio=ssm_ratio)
         self.dwconv = nn.Sequential(
                 nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=1, groups=embed_dim),
@@ -144,10 +144,10 @@ class MixAttention(nn.Module):
     ### atten 运算
     def forward(self, x, pos_enc):
         b, c, h, w = x.shape
-        shorcut = x
-        atten = self.attn(x, pos_enc)
-        atten = atten.flatten(2).transpose(1, 2).contiguous()  # (b, c, h, w) -> (b, h * w, c)
-        x = x + self.norm(atten).reshape((b, h, w, c)).permute(0, 3, 1, 2)  # (b, h * w, c) -> (b, c, h, w)
+        # shorcut = x
+        # atten = self.attn(x, pos_enc)
+        # atten = atten.flatten(2).transpose(1, 2).contiguous()  # (b, c, h, w) -> (b, h * w, c)
+        # x = x + self.norm(atten).reshape((b, h, w, c)).permute(0, 3, 1, 2)  # (b, h * w, c) -> (b, c, h, w)
         v_r = x
         v = self.act(self.dwconv(v_r))
         v = self.ssm(v)
@@ -155,8 +155,19 @@ class MixAttention(nn.Module):
         v = self.norm1(v)
         v = v.permute(0, 2, 1).reshape((b, -1, h, w))
         x = v_r + v
-        x = x + shorcut
+        # x = x + shorcut
         x = self.proj(x)
+        return x
+
+class NMixAttention(nn.Module):
+    def __init__(self, embed_dim, num_heads, num_points=4, ssm_ratio=1, global_mode=True, kernels=None, norm_cfg=dict(type='LN', requires_grad=True)):
+        super(NMixAttention, self).__init__()
+        
+    
+    ### atten 运算
+    def forward(self, x, pos_enc):
+        b, c, h, w = x.shape
+        
         return x
 
 
@@ -184,6 +195,7 @@ class MixBlock(nn.Module):
         x = x + self.cpe2(x)
         x = x + self.drop_path(self.layer_scale2(self.mlp(self.norm2(x))))
         return x
+
 
 
 class MixLayer(nn.Module):
@@ -245,7 +257,7 @@ class MixLayer(nn.Module):
 class mixer(BaseModule):
     def __init__(self,
                  in_channels=3,
-                 depths=[2, 2, 9, 4],
+                 depths=[2, 2, 9, 2],
                  dims=[64, 144, 288, 512],
                  num_heads=[2, 4, 8, 16],
                  mlp_ratios=[4, 4, 4, 4],
@@ -316,7 +328,6 @@ class mixer(BaseModule):
             nn.init.ones_(m.weight)
             nn.init.zeros_(m.bias)
 
-    
     def init_weights(self):
         logger = get_root_logger()
         """自定义初始化权重"""

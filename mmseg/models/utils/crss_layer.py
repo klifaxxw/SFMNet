@@ -870,9 +870,6 @@ class SplitCross(nn.Module):
         self.ccr = nn.ModuleList()
         # self.alpha = nn.Parameter(torch.ones(self.num_features))  # 标量
         self.beta = nn.Parameter(torch.ones(self.num_features)) * 0.5      # 向量
-
-        
-
         for i, in_channel in enumerate(in_channels):
             low_kv = nn.Conv2d(ebdim, 2 * ebdim, 1)
             self.low_kv.append(low_kv)
@@ -925,7 +922,6 @@ class SplitCross(nn.Module):
             high_sin, high_cos = self.high_rope((h1, w1))
             # high frequence
             y_h = self.Hsplit(y)
-            
             kv_h = self.high_kv[i_layer](y_h)
             kv_h = kv_h.permute((0, 2, 3, 1))
             k_h, v_h = kv_h.split(MIN_DIM, dim=-1)

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+
+
 # 确保输出及时刷新
 export PYTHONUNBUFFERED=1
 
@@ -8,6 +10,7 @@ export OMP_NUM_THREADS=1
 
 # 设置默认通信端口（如未传递环境变量 PORT，则默认为 29500）
 PORT=${PORT:-29500}
+
 
 # 打印端口号，便于调试
 echo "Using master port: $PORT"

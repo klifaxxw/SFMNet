@@ -40,7 +40,7 @@ model = dict(
         # loss_decode=dict(
         #     type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
         loss_decode=dict(
-            type='MixLoss', loss_weight=[1.0, 0.5], total_iters=total_iters)),
+            type='MixLoss', loss_weight=[1.0, 1.2], total_iters=total_iters)),
     auxiliary_head=dict(
         type='FCNHead',
         in_channels=384,

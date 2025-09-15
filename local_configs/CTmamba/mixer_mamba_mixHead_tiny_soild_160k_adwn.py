@@ -13,8 +13,8 @@ model = dict(
     backbone=dict(
         type='mixer',
         in_chans=3,
-        depths=[2, 2, 9, 4],
-        dims=[64, 144, 288, 512],
+        depths=[2, 2, 9, 2],
+        dims=[96, 192, 384, 768],
         num_heads=[2, 4, 8, 16],
         mlp_ratios=[4, 4, 4, 4],
         kernels=[7, 11, 21],
@@ -64,13 +64,13 @@ model = dict(
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
 
-data = dict(samples_per_gpu=6)
+data = dict(samples_per_gpu=8)
 evaluation = dict(interval=3000, metric='mIoU')
 checkpoint_config = dict(by_epoch=False, interval=3000)
 runner = dict(type='IterBasedRunner', max_iters=total_iters)
 # optimizer
 optimizer = dict(_delete_=True, type='AdamW', lr=6e-5, betas=(0.9, 0.999), weight_decay=0.01,
-                 paramwise_cfg=dict(custom_keys={
+                 paramwise_cfg=dict(custom_keys={'level_embed': dict(decay_mult=0.),
                                                 'norm': dict(decay_mult=0.),
                                                 'A_log':dict(decay_mult=0.0),  # 禁用 A_log 的权重衰减
                                                 'D': dict(decay_mult=0.0),  # 禁用 D 的权重衰减
