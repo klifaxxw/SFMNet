@@ -1,0 +1,3 @@
+[submodule "mmseg/core/pytorch_wavelets"]
+	path = mmseg/core/pytorch_wavelets
+	url = https://github.com/fbcotter/pytorch_wavelets.git
