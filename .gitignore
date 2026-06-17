@@ -115,6 +115,11 @@ data
 *.log.json
 *.jpg
 *.png
+!resources/sfmnet_architecture.png
+!resources/loveda_visualization.png
+!resources/potsdam_visualization.png
+!resources/vaihingen_visualization.png
+!resources/mmseg-logo.png
 *.jpeg
 work_dirs/
 mmseg/.mim
