@@ -40,6 +40,7 @@ class BaseCascadeDecodeHead(BaseDecodeHead, metaclass=ABCMeta):
         return losses
 
     def forward_test(self, inputs, prev_output, img_metas, test_cfg):
+        print("-------------------",img_metas)
         """Forward function for testing.
 
         Args:

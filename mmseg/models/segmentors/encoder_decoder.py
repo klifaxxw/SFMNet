@@ -115,8 +115,16 @@ class EncoderDecoder(BaseSegmentor):
 
     def forward_dummy(self, img):
         """Dummy forward function."""
-        seg_logit = self.encode_decode(img, None)
-
+        B, _, H, W = img.shape
+        img_metas = [{
+            'img_shape': (H, W, 3),
+            'ori_shape': (H, W, 3),
+            'pad_shape': (H, W, 3),
+            'scale_factor': 1.0,
+            'flip': False,
+            'flip_direction': None,
+            } for _ in range(B)]
+        seg_logit = self.encode_decode(img, img_metas)
         return seg_logit
 
     def forward_train(self, img, img_metas, gt_semantic_seg):

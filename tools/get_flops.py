@@ -1,12 +1,17 @@
+import warnings
+warnings.filterwarnings("ignore")
 import argparse
 
 from mmcv import Config
 from mmcv.cnn import get_model_complexity_info
+from mmseg.models.utils import selective_scan_flop_jit
 
 from mmseg.models import build_segmentor
 
 import torch
 from torchprofile import profile_macs
+from mmseg.models.utils import selective_scan_flop_jit
+from fvcore.nn import FlopCountAnalysis, parameter_count_table
 
 
 def parse_args():
@@ -53,9 +58,33 @@ def main():
     print('{0}\nInput shape: {1}\nFlops: {2}\nParams: {3}\n{0}'.format(
         split_line, input_shape, flops, params))
 
-    inputs = torch.randn(1, *input_shape).cuda()
-    macs = profile_macs(model, inputs) / 1e9
-    print(f'GFLOPs {macs}.')
+    # # inputs = torch.randn(1, *input_shape).cuda()
+    # # macs = profile_macs(model, inputs) / 1e9
+    # # print(f'GFLOPs {macs}.')
+    # x = torch.randn(1, *input_shape).cuda()
+    # op_handle = {
+    #     "aten::silu": None,
+    #     "aten::neg": None,
+    #     "aten::exp": None,
+    #     "aten::flip": None,
+    #     "prim::PythonOp.DWTForward": None,
+    #     "prim::PythonOp.SelectiveScanFn": selective_scan_flop_jit,
+    # }
+
+    # with torch.no_grad():
+    #     flops = FlopCountAnalysis(model, (x,))
+    #     flops.set_op_handle(**op_handle)
+
+    # total_flops = flops.total()          # 原始 FLOPs (整数)
+    # gflops = total_flops / 1e9           # 转 GFLOPs
+    # split_line = "=" * 40
+
+    # print(split_line)
+    # print(f"Config: {args.config}")
+    # print(f"Input shape: (1, {input_shape[0]}, {input_shape[1]}, {input_shape[2]})")
+    # print(f"FLOPs: {gflops:.2f} GFLOPs")
+    # print(split_line)
+    # print(parameter_count_table(model))
 
 
 if __name__ == '__main__':

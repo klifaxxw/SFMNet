@@ -28,8 +28,19 @@ from .mamba import MambaBackbone
 from .rsm import RSMBackbone
 from .rs3m import RS3MBackbone
 from .vm import VMUBackbone
-from .mix import mixer
+# from .mix import mixer
 from .cswin import CSWin
+from .mix_transformer import *
+from .sffnet_backbone import sff
+from .sft import SFTran
+from .sft1 import SFTran1
+from .sft2 import SFTran2
+from .sft4 import SFTran4
+from .sft5 import SFTran5
+from .ABCNetBackbone import ABCNetBackbone
+from .UNetFormerBackbone import UNetFormerBackbone
+from .biformer import BiFormer
+from .eft import EFT_T, EFT_B
 
 __all__ = [
     'ResNet', 'ResNetV1c', 'ResNetV1d', 'ResNeXt', 'HRNet', 'FastSCNN',
@@ -39,5 +50,6 @@ __all__ = [
     'SVT', 'STDCNet', 'STDCContextPathNet', 'BEiT', 'MAE',
     'MSCAN', "MambaUE", "CCrossTransformer", 'SwinTransformer',
     "RSMBackbone", "VMUBackbone", "CSWin",
-    "RS3MBackbone", 'MambaBackbone', 'mixer'
+    "RS3MBackbone", 'MambaBackbone', 'sff',  "SFTran", "SFTran1", "SFTran2", "BiFormer", 'EFT_T', 'EFT_B',
+    "SFTran4", "SFTran5"
 ]

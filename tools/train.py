@@ -25,14 +25,13 @@ from mmseg.utils import (collect_env, get_device, get_root_logger,
                          setup_multi_processes)
 
 
-
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
-    parser.add_argument('--config', default="local_configs/versus/upernet_cswin_tiny_512x512_potsdam.py", help='train config file path')
+    parser.add_argument('--config', default="local_configs/versus/vaihingen/ablation/SFTran.512x512.vaihingen.160k.py", help='train config file path')
     # Umamba_tiny
-    parser.add_argument('--work-dir', default="runs1/cswin_upernet_1", help='the dir to save logs and models')
+    parser.add_argument('--work-dir', default="runs/vaihingen/ablation/msc-mfc-sia-dfg", help='the dir to save logs and models')
     parser.add_argument(
-        '--load-from', default="weights/upernet_cswin_tiny.pth", help='the checkpoint file to load weights from')
+        '--load-from', default="runs/vaihingen/ablation/msc-mfc-sia/best_mIoU_iter_18000.pth", help='the checkpoint file to load weights from')
     parser.add_argument(
         '--resume-from', default=None,  help='the checkpoint file to resume from')
     parser.add_argument(

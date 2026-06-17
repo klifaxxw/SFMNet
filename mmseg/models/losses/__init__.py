@@ -7,6 +7,7 @@ from .focal_loss import FocalLoss
 from .lovasz_loss import LovaszLoss
 from .utils import reduce_loss, weight_reduce_loss, weighted_loss
 from .mix_loss import MixLoss
+from .sff_loss import SFFLoss
 
 __all__ = [
     'accuracy', 'Accuracy', 'cross_entropy', 'binary_cross_entropy',

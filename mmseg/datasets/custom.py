@@ -15,6 +15,9 @@ from .builder import DATASETS
 from .pipelines import Compose, LoadAnnotations
 
 
+
+
+
 @DATASETS.register_module()
 class CustomDataset(Dataset):
     """Custom dataset for semantic segmentation. An example of file structure
@@ -409,7 +412,7 @@ class CustomDataset(Dataset):
         """
         if isinstance(metric, str):
             metric = [metric]
-        allowed_metrics = ['mIoU', 'mDice', 'mFscore']
+        allowed_metrics = ['mIoU', 'mDice', 'mFscore', "mBIoU"]
         if not set(metric).issubset(set(allowed_metrics)):
             raise KeyError('metric {} is not supported'.format(metric))
 
@@ -419,6 +422,7 @@ class CustomDataset(Dataset):
                 results, str):
             if gt_seg_maps is None:
                 gt_seg_maps = self.get_gt_seg_maps()
+                # gt_seg_maps = list(self.get_gt_seg_maps())
             num_classes = len(self.CLASSES)
             ret_metrics = eval_metrics(
                 results,

@@ -35,7 +35,9 @@ class RS3MBackbone(BaseModule):
                  **kwargs):
         super().__init__(init_cfg)
         self.backbone = timm.create_model(backbone_name, features_only=True, output_stride=32,
-                                          out_indices=(1, 2, 3, 4), pretrained=pretrained)
+                                          out_indices=(1, 2, 3, 4), pretrained=False)
+        pretrained_weight = load_ckpt("weights/semi_weakly_supervised_resnet18-118f1556.pth")
+        self.backbone.load_state_dict(pretrained_weight, strict=False)
         # self.conv1 = self.backbone.conv1
         # self.bn1 = self.backbone.bn1
         # self.act1 = self.backbone.act1

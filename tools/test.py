@@ -1,4 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import warnings
+warnings.filterwarnings("ignore")
 import argparse
 import os
 import os.path as osp
@@ -220,6 +222,8 @@ def main():
     if fp16_cfg is not None:
         wrap_fp16_model(model)
     checkpoint = load_checkpoint(model, args.checkpoint, map_location='cpu')
+    print(checkpoint['meta']['CLASSES'])
+    print(checkpoint['meta']['PALETTE'])
     if 'CLASSES' in checkpoint.get('meta', {}):
         model.CLASSES = checkpoint['meta']['CLASSES']
     else:
@@ -277,7 +281,7 @@ def main():
             args.show_dir,
             False,
             args.opacity,
-            pre_eval=args.eval is not None and not eval_on_format_results,
+            pre_eval=args.eval is not None and not eval_on_format_results and "mBIoU" not in args.eval,
             format_only=args.format_only or eval_on_format_results,
             format_args=eval_kwargs)
     else:

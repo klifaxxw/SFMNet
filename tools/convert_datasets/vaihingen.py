@@ -9,14 +9,15 @@ import zipfile
 
 import mmcv
 import numpy as np
+from mmengine.utils import ProgressBar, mkdir_or_exist
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Convert vaihingen dataset to mmsegmentation format')
-    parser.add_argument('dataset_path', help='vaihingen folder path')
-    parser.add_argument('--tmp_dir', help='path of the temporary directory')
-    parser.add_argument('-o', '--out_dir', help='output path')
+    parser.add_argument('--dataset_path', default="/home/dell/x/data", help='vaihingen folder path')
+    parser.add_argument('--tmp_dir', default="/home/dell/x/data", help='path of the temporary directory')
+    parser.add_argument('-o', '--out_dir', default="/home/dell/x/data/vaihingen", help='output path')
     parser.add_argument(
         '--clip_size',
         type=int,
@@ -111,16 +112,18 @@ def main():
         out_dir = args.out_dir
 
     print('Making directories...')
-    mmcv.mkdir_or_exist(osp.join(out_dir, 'img_dir', 'train'))
-    mmcv.mkdir_or_exist(osp.join(out_dir, 'img_dir', 'val'))
-    mmcv.mkdir_or_exist(osp.join(out_dir, 'ann_dir', 'train'))
-    mmcv.mkdir_or_exist(osp.join(out_dir, 'ann_dir', 'val'))
-
+    mkdir_or_exist(osp.join(out_dir, 'img_dir', 'train'))
+    mkdir_or_exist(osp.join(out_dir, 'img_dir', 'val'))
+    mkdir_or_exist(osp.join(out_dir, 'ann_dir', 'train'))
+    mkdir_or_exist(osp.join(out_dir, 'ann_dir', 'val'))
     zipp_list = glob.glob(os.path.join(dataset_path, '*.zip'))
     print('Find the data', zipp_list)
 
     with tempfile.TemporaryDirectory(dir=args.tmp_dir) as tmp_dir:
         for zipp in zipp_list:
+            isLabel_Flag = False
+            if 'ISPRS_semantic_labeling_Vaihingen_ground_truth_eroded_COMPLETE' in zipp:  # noqa
+                continue
             zip_file = zipfile.ZipFile(zipp)
             zip_file.extractall(tmp_dir)
             src_path_list = glob.glob(os.path.join(tmp_dir, '*.tif'))
@@ -133,22 +136,28 @@ def main():
                 for area_ann in src_path_list:
                     if 'area9' in area_ann:
                         src_path_list.remove(area_ann)
-            prog_bar = mmcv.ProgressBar(len(src_path_list))
+            if 'ISPRS_semantic_labeling_Vaihingen_ground_truth_COMPLETE' in zipp:  # noqa
+                isLabel_Flag = True
+                src_path_list = glob.glob(os.path.join(tmp_dir, '*.tif'))
+                for area_ann in src_path_list:
+                    if 'area9' in area_ann:
+                        src_path_list.remove(area_ann)
+
+
+            prog_bar = ProgressBar(len(src_path_list))
             for i, src_path in enumerate(src_path_list):
                 area_idx = osp.basename(src_path).split('_')[3].strip('.tif')
                 data_type = 'train' if area_idx in splits['train'] else 'val'
-                if 'noBoundary' in src_path:
+                if 'noBoundary' in src_path or isLabel_Flag:
                     dst_dir = osp.join(out_dir, 'ann_dir', data_type)
-                    clip_big_image(src_path, dst_dir, to_label=False)
+                    clip_big_image(src_path, dst_dir, to_label=True)
                 else:
                     dst_dir = osp.join(out_dir, 'img_dir', data_type)
                     clip_big_image(src_path, dst_dir, to_label=False)
                 prog_bar.update()
-        
+
         print('Removing the temporary files...')
-
     print('Done!')
-
 
 if __name__ == '__main__':
     args = parse_args()

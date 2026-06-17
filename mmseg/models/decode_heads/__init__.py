@@ -20,7 +20,7 @@ from .ocr_head import OCRHead
 from .point_head import PointHead
 from .psa_head import PSAHead
 from .psp_head import PSPHead
-from .segformer_head import SegformerHead
+from .segformer_head import SegFormerHead
 from .segmenter_mask_head import SegmenterMaskTransformerHead
 from .sep_aspp_head import DepthwiseSeparableASPPHead
 from .sep_fcn_head import DepthwiseSeparableFCNHead
@@ -30,10 +30,24 @@ from .stdc_head import STDCHead
 from .uper_head import UPerHead
 from .ham_head import LightHamHead
 from .MambaUD import MambaUD
-from .mix_head import MixHead
+# from .mix_head import MixHead
 from .rs_head import RSMHead
 from .vm_head import VMUHead
 from .rs3m_head import RS3MHead
+from .feedformer_head import FeedFormerHead
+from .epfo_head import EPFO_Head
+from .msca_head import MSCA_Head
+from .ABCNet_Head import ABCOutputHead
+from .UNetFormer_Head import UNetFormerMainHead
+from .UNetFormerAuxHead import UNetFormerAuxHead
+from .mpc_head import MPC_Head
+from .ft_head import HLFT
+from .ft_head1 import HLFT1
+from .ft_head2 import HLFT2
+from .ft_head3 import HLFT3
+from .ft_head4 import HLFT4
+from .sffnet_head import SFFHead
+from .edaformer_head import EDAFormerHead
 
 __all__ = [
     'FCNHead', 'PSPHead', 'ASPPHead', 'PSAHead', 'NLHead', 'GCHead', 'CCHead',
@@ -41,7 +55,8 @@ __all__ = [
     'EncHead', 'DepthwiseSeparableFCNHead', 'FPNHead', 'EMAHead', 'DNLHead',
     'PointHead', 'APCHead', 'DMHead', 'LRASPPHead', 'SETRUPHead',
     'SETRMLAHead', 'DPTHead', 'SETRMLAHead', 'SegmenterMaskTransformerHead',
-    'SegformerHead', 'ISAHead', 'STDCHead', 'IterativeDecodeHead',
+    'SegFormerHead', 'ISAHead', 'STDCHead', 'IterativeDecodeHead',
     'KernelUpdateHead', 'KernelUpdator', 'LightHamHead', "MambaUD",
-    "RSMHead", "RS3MHead", "MixHead"
+    "ABCOutputHead", 'EDAFormerHead', 
+    "RSMHead", "RS3MHead", "FeedFormerHead", "EPFO_Head", "SFFHead", "MSCA_Head", "MPC_Head", "HLFT", "HLFT1", "HLFT2", "HLFT3", "HLFT4"
 ]

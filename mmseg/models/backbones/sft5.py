@@ -34,7 +34,6 @@ class Mlp(BaseModule):
         x = self.drop(x)
         x = self.fc2(x)
         x = self.drop(x)
-
         return x
 
 
@@ -63,16 +62,16 @@ class AttentionModule(BaseModule):
     def __init__(self, dim):
         super().__init__()
         self.conv0 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim)
-        self.conv0_1 = nn.Conv2d(dim, dim, (1, 7), padding=(0, 3), groups=dim)
-        self.conv0_2 = nn.Conv2d(dim, dim, (7, 1), padding=(3, 0), groups=dim)
+        self.conv0_1 = nn.Conv2d(dim, dim, (1, 5), padding=(0, 2), groups=dim)
+        self.conv0_2 = nn.Conv2d(dim, dim, (5, 1), padding=(2, 0), groups=dim)
 
-        self.conv1_1 = nn.Conv2d(dim, dim, (1, 11), padding=(0, 5), groups=dim)
-        self.conv1_2 = nn.Conv2d(dim, dim, (11, 1), padding=(5, 0), groups=dim)
+        self.conv1_1 = nn.Conv2d(dim, dim, (1, 9), padding=(0, 4), groups=dim)
+        self.conv1_2 = nn.Conv2d(dim, dim, (9, 1), padding=(4, 0), groups=dim)
 
         self.conv2_1 = nn.Conv2d(
-            dim, dim, (1, 21), padding=(0, 10), groups=dim)
+            dim, dim, (1, 13), padding=(0, 6), groups=dim)
         self.conv2_2 = nn.Conv2d(
-            dim, dim, (21, 1), padding=(10, 0), groups=dim)
+            dim, dim, (13, 1), padding=(6, 0), groups=dim)
 
         self.down = nn.MaxPool2d(2, 2)
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
@@ -122,9 +121,74 @@ class Sw(nn.Module):
     def forward(self, x):
         return self.implicit * x
 
+class SFConv(nn.Module):
+    def __init__(self, channels, kernel=3, weight=False, bias=False, shortcut=False, mode="random"):
+        super().__init__()
+        self.channels = channels
+        self.shortcut = shortcut
+
+        if weight:
+            self.sw = Sw(channels)
+        else:
+            self.sw = nn.Identity()
+
+        if bias:
+            self.sb = Sb(channels)
+        else:
+            self.sb = nn.Identity()
+
+        if shortcut:
+            self.shortcut_proj = nn.Conv2d(channels, channels, 3, 1, 1, groups=channels)
+
+        # 初始化频率滤波核
+        if mode == "random":
+            k = torch.empty(kernel, kernel).uniform_(-0.5, 0.5)
+        elif mode == "ones":
+            k = torch.ones(kernel, kernel)
+        elif mode == "zeros":
+            k = torch.zeros(kernel, kernel)
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+
+        self.kernel = nn.Parameter(k)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        device = x.device
+        # 频域变换
+        F_fft = fft.fftshift(fft.fft2(x, dim=(-2, -1)), dim=(-2, -1))
+        # 构造核
+        kernel_padded = torch.zeros((h, w), dtype=x.dtype, device=device)
+        kh, kw = self.kernel.shape
+        kernel_padded[:kh, :kw] = self.kernel
+        FX = fft.fftshift(fft.fft2(kernel_padded))
+        FX = FX.unsqueeze(0).unsqueeze(0).expand(b, c, -1, -1)
+        # 频率乘积 & 逆变换
+        G = F_fft * FX
+        G = torch.abs(fft.ifft2(fft.ifftshift(G, dim=(-2, -1)), dim=(-2, -1)))
+
+        # 权重与偏置调制
+        G = self.sb(self.sw(G))
+
+        if self.shortcut:
+            return self.shortcut_proj(G) + x
+        else:
+            return G
+
+
+class LayerNorm2d(nn.LayerNorm):
+    def __init__(self, dim):
+        super().__init__(normalized_shape=dim, eps=1e-6)
+
+    def forward(self, x):
+        x = x.permute(0, 2, 3, 1)
+        x = super().forward(x)
+        x = x.permute(0, 3, 1, 2)
+        return x.contiguous()
+
 # kernels: [5, 9, 15]
 class SFourierKTrans(nn.Module):
-    def __init__(self, d_model, kernel_sizes=[5, 9, 15], mode="random"):
+    def __init__(self, d_model, kernel_sizes=[3, 5, 9], mode="random"):
         super().__init__()
         self.proj = nn.Conv2d(d_model, d_model, 3, 1, 1, groups=d_model)
         self.kernel_sizes = kernel_sizes
@@ -132,7 +196,7 @@ class SFourierKTrans(nn.Module):
         # 注册可学习参数卷积核
         for size in kernel_sizes:
             if mode == "random":
-                k = torch.empty(size, size).uniform_(-1, 1)
+                k = torch.empty(size, size).uniform_(-0.5, 0.5)
             elif mode == "ones":
                 k = torch.ones(size, size)
             elif mode == "zeros":
@@ -217,7 +281,54 @@ class SFourierHighTrans(nn.Module):
         Gy = G * FY
         gx = torch.abs(fft.ifft2(fft.ifftshift(Gx, dim=(-2, -1)), dim=(-2, -1)))
         gy = torch.abs(fft.ifft2(fft.ifftshift(Gy, dim=(-2, -1)), dim=(-2, -1)))
-        return gx, gy
+        g = torch.sqrt(gx ** 2 + gy ** 2)
+        return g
+
+class SFourierGaussLowHigh(nn.Module):
+    def __init__(self, mode="fine", ks=5, sigma=1.0):
+        super().__init__()
+        assert ks % 2 == 1, "kernel size ks should be odd."
+        self.ks = ks
+        self.sigma = sigma
+        gauss = self._gaussian_kernel_2d(ks, sigma)
+        self.register_buffer("gauss", gauss)
+        if mode == "fine":
+            self.gauss_b = nn.Parameter(torch.zeros_like(gauss))
+        elif mode == "constant":
+            self.gauss_b = None
+        else:
+            raise NotImplementedError(f"Mode {mode} is not supported for SFourierGaussLowHigh")
+
+    @staticmethod
+    def _gaussian_kernel_2d(ks, sigma, dtype=torch.float32, device="cpu"):
+        ax = torch.arange(ks, dtype=dtype, device=device) - ks // 2
+        try:
+            xx, yy = torch.meshgrid(ax, ax, indexing="ij")
+        except TypeError:
+            xx, yy = torch.meshgrid(ax, ax)
+        kernel = torch.exp(-(xx ** 2 + yy ** 2) / (2 * sigma ** 2))
+        kernel = kernel / kernel.sum()
+        return kernel
+
+    def forward(self, x):
+        device = x.device
+        dtype = x.dtype
+        b, c, h, w = x.shape
+        if getattr(self, "gauss_b", None) is not None:
+            k = self.gauss.to(device=device, dtype=dtype) + self.gauss_b.to(device=device, dtype=dtype)
+        else:
+            k = self.gauss.to(device=device, dtype=dtype)
+        k = k / (k.sum() + 1e-6)
+        f = torch.zeros((h, w), dtype=dtype, device=device)
+        ks = self.ks
+        f[:ks, :ks] = k
+        F = fft.fftshift(fft.fft2(f))   
+        F = F.view(1, 1, h, w)
+        G = fft.fftshift(fft.fft2(x, dim=(-2, -1)), dim=(-2, -1)) 
+        G = G * F
+        G = torch.abs(fft.ifft2(fft.ifftshift(G, dim=(-2, -1)), dim=(-2, -1)))
+        return G
+
 
 
 class WTrans(nn.Module):
@@ -230,6 +341,7 @@ class WTrans(nn.Module):
         self.idwt = DWTInverse(wave=wave, mode='zero')
         self.proj2 = nn.Conv2d(d_model, d_model, 3, 1, 1, groups=d_model)
 
+
     def forward(self, x, gx=None, gy=None):
         x = self.proj(x)
         yl, yh_list = self.dwt(x)
@@ -240,13 +352,7 @@ class WTrans(nn.Module):
             hl_add = F.avg_pool2d(gy, kernel_size=2)
             hh_add = torch.sqrt(lh_add ** 2 + hl_add ** 2)
             y1_add = self.act(self.down(x))
-
-            # 使用最大值缩放增强量
-            lh_add = lh_add * (lh.abs().max() / (lh_add.abs().max() + 1e-6))
-            hl_add = hl_add * (hl.abs().max() / (hl_add.abs().max() + 1e-6))
-            hh_add = hh_add * (hh.abs().max() / (hh_add.abs().max() + 1e-6))
-            y1_add = y1_add * (yl.abs().max() / (y1_add.abs().max() + 1e-6))
-            # 叠加到原始高频
+            # 叠加能量幅度到原始高频
             lh = lh + lh_add
             hl = hl + hl_add
             hh = hh + hh_add
@@ -270,29 +376,26 @@ class FrequencyAttention(BaseModule):
     def forward(self, x):
         x1 = self.proj(x)
         gx, gy = self.sfft(x1)
+        g = torch.sqrt(gx ** 2 + gy ** 2)
         x1 = self.wave(x1, gx=gx, gy=gy)
         x = x + self.proj1(x1)
         return x
 
 
 class SpatialAttention(BaseModule):
-    def __init__(self, d_model, norm_cfg=dict(type='SyncBN', requires_grad=True)):
+    def __init__(self, d_model, kernels=[5, 9, 15], norm_cfg=dict(type='SyncBN', requires_grad=True)):
         super().__init__()
         self.d_model = d_model
         self.convert_1 = nn.Conv2d(self.d_model, self.d_model, 1)
-        self.sk = SFourierKTrans(self.d_model)
+        self.sk = SFourierKTrans(self.d_model, kernel_sizes=kernels)
+        self.norm = LayerNorm2d(self.d_model)
         self.convert_2 = nn.Conv2d(self.d_model, self.d_model, 1)
 
         self.proj_1 = nn.Conv2d(self.d_model, self.d_model, 1)
         self.activation = nn.GELU()
+        
         self.spatial_gating_unit = AttentionModule(self.d_model)
         self.proj_2 = nn.Conv2d(self.d_model, self.d_model, 1)
-
-        self.frequency_attention = FrequencyAttention(d_model)
-        self.proj_3 = nn.Conv2d(d_model, d_model, 1)
-        self.activation1 = nn.GELU()
-        # self.norm1 = build_norm_layer(norm_cfg, d_model)[1]
-        self.proj_4 = nn.Conv2d(d_model, d_model, 1)
 
     def forward(self, x):
         shortcut = x.clone()
@@ -305,57 +408,10 @@ class SpatialAttention(BaseModule):
         shortcut = x.clone()
         x = self.convert_1(x)
         x = self.sk(x)
+        x = self.norm(x)
         x = self.convert_2(x)
         x = x + shortcut
-
-        shortcut = x.clone()
-        x = self.proj_3(x)
-        # x = self.norm1(x)
-        x = self.activation1(x)
-        x = self.frequency_attention(x)
-        x = self.proj_4(x)
-        x = x + shortcut
         return x
-
-# class SpatialAttention(BaseModule):
-#     def __init__(self, d_model, norm_cfg=dict(type='SyncBN', requires_grad=True)):
-#         super().__init__()
-#         self.d_model = d_model
-#         self.convert_1 = nn.Conv2d(self.mid_model, self.mid_model, 1)
-#         self.sk = SFourierKTrans(self.mid_model)
-#         self.convert_2 = nn.Conv2d(self.mid_model, self.mid_model, 1)
-
-#         self.proj_1 = nn.Conv2d(self.mid_model, self.mid_model, 1)
-#         self.activation = nn.GELU()
-#         self.spatial_gating_unit = AttentionModule(self.mid_model)
-#         self.proj_2 = nn.Conv2d(self.mid_model, self.mid_model, 1)
-
-#         self.frequency_attention = FrequencyAttention(d_model)
-#         self.proj_3 = nn.Conv2d(d_model, d_model, 1)
-#         self.activation1 = nn.GELU()
-#         self.norm1 = build_norm_layer(norm_cfg, d_model)[1]
-#         self.proj_4 = nn.Conv2d(d_model, d_model, 1)
-
-#     def forward(self, x):
-#         shortcut = x.clone()
-#         u, v = x.chunk(2, dim=1)
-#         u = self.convert_1(u)
-#         u = self.sk(u)
-#         u = self.convert_2(u)
-#         v = self.proj_1(v)
-#         v = self.activation(v)
-#         v = self.spatial_gating_unit(v)
-#         v = self.proj_2(v)
-#         x = torch.cat([u, v], dim=1)
-#         x = x + shortcut
-#         shortcut = x.clone()
-#         x = self.proj_3(x)
-#         x = self.norm1(x)
-#         x = self.activation1(x)
-#         x = self.frequency_attention(x)
-#         x = self.proj_4(x)
-#         x = x + shortcut
-#         return x
 
 
 class Block(BaseModule):
@@ -363,12 +419,13 @@ class Block(BaseModule):
                  dim,
                  mlp_ratio=4.,
                  drop=0.,
+                 kernels=[5, 9, 15],
                  drop_path=0.,
                  act_layer=nn.GELU,
                  norm_cfg=dict(type='SyncBN', requires_grad=True)):
         super().__init__()
         self.norm1 = build_norm_layer(norm_cfg, dim)[1]
-        self.attn = SpatialAttention(dim, norm_cfg=norm_cfg)
+        self.attn = SpatialAttention(dim, norm_cfg=norm_cfg, kernels=kernels)
         self.drop_path = DropPath(
             drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = build_norm_layer(norm_cfg, dim)[1]
@@ -391,11 +448,9 @@ class Block(BaseModule):
         x = x.view(B, C, N).permute(0, 2, 1)
         return x
 
-
 class OverlapPatchEmbed(BaseModule):
     """ Image to Patch Embedding
     """
-
     def __init__(self, patch_size=7, stride=4, in_chans=3, embed_dim=768,
                  norm_cfg=dict(type='SyncBN', requires_grad=True)):
         super().__init__()
@@ -413,11 +468,12 @@ class OverlapPatchEmbed(BaseModule):
 
 
 @BACKBONES.register_module()
-class MSCAN(BaseModule):
+class SFTran5(BaseModule):
     def __init__(self,
                  in_chans=3,
                  embed_dims=[64, 128, 256, 512],
-                 mlp_ratios=[4, 4, 4, 4],
+                 mlp_ratios=[8, 8, 4, 4],
+                 kernels=[5, 9, 15],
                  drop_rate=0.,
                  drop_path_rate=0.,
                  depths=[3, 4, 6, 3],
@@ -425,8 +481,8 @@ class MSCAN(BaseModule):
                  norm_cfg=dict(type='SyncBN', requires_grad=True),
                  pretrained=None,
                  init_cfg=None):
-        super(MSCAN, self).__init__(init_cfg=init_cfg)
-
+        print(kernels)
+        super(SFTran5, self).__init__(init_cfg=init_cfg)
         assert not (init_cfg and pretrained), \
             'init_cfg and pretrained cannot be set at the same time'
         if isinstance(pretrained, str):
@@ -442,7 +498,6 @@ class MSCAN(BaseModule):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate,
                                                 sum(depths))]  # stochastic depth decay rule
         cur = 0
-
         for i in range(num_stages):
             if i == 0:
                 patch_embed = StemConv(3, embed_dims[0], norm_cfg=norm_cfg)
@@ -452,20 +507,17 @@ class MSCAN(BaseModule):
                                                 in_chans=in_chans if i == 0 else embed_dims[i - 1],
                                                 embed_dim=embed_dims[i],
                                                 norm_cfg=norm_cfg)
-
             block = nn.ModuleList([Block(dim=embed_dims[i], mlp_ratio=mlp_ratios[i],
                                          drop=drop_rate, drop_path=dpr[cur + j],
-                                         norm_cfg=norm_cfg)
+                                         norm_cfg=norm_cfg, kernels=kernels)
                                    for j in range(depths[i])])
             norm = nn.LayerNorm(embed_dims[i])
             cur += depths[i]
-
             setattr(self, f"patch_embed{i + 1}", patch_embed)
             setattr(self, f"block{i + 1}", block)
             setattr(self, f"norm{i + 1}", norm)
 
     def init_weights(self):
-        print('init cfg', self.init_cfg)
         if self.init_cfg is None:
             for m in self.modules():
                 if isinstance(m, nn.Linear):
@@ -479,7 +531,7 @@ class MSCAN(BaseModule):
                     normal_init(
                         m, mean=0, std=math.sqrt(2.0 / fan_out), bias=0)
         else:
-            super(MSCAN, self).init_weights()
+            super(SFTran, self).init_weights()
 
     def forward(self, x):
         B = x.shape[0]

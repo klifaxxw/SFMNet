@@ -12,9 +12,9 @@ import mmcv
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Convert LoveDA dataset to mmsegmentation format')
-    parser.add_argument('dataset_path', help='LoveDA folder path')
-    parser.add_argument('--tmp_dir', help='path of the temporary directory')
-    parser.add_argument('-o', '--out_dir', help='output path')
+    parser.add_argument('--dataset_path', default="/home/dell/x/data", help='LoveDA folder path')
+    parser.add_argument('--tmp_dir', default=".", help='path of the temporary directory')
+    parser.add_argument('--out_dir', default="/home/dell/x/data", help='output path')
     args = parser.parse_args()
     return args
 
