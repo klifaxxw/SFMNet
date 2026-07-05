@@ -138,7 +138,42 @@ pip install -e .
 #### ISPRS Potsdam & Vaihingen
 
 - Download from the [ISPRS 2D Semantic Labeling Contest](https://www.isprs.org/education/benchmarks/UrbanSemLab/default.aspx).
-- Organize each dataset as follows and update `data_root` in [`local_configs/_base_/datasets/potsdam.py`](local_configs/_base_/datasets/potsdam.py) / [`vaihingen.py`](local_configs/_base_/datasets/vaihingen.py):
+- Place all downloaded `.zip` files in one folder (e.g. `data/potsdam_raw/` or `data/vaihingen_raw/`).
+- Convert the raw data to MMSegmentation format using the scripts in [`tools/convert_datasets/`](tools/convert_datasets/):
+
+**Potsdam**
+
+```bash
+python tools/convert_datasets/potsdam.py \
+  --dataset_path /path/to/potsdam_raw \
+  --tmp_dir /path/to/tmp \
+  -o /path/to/potsdam \
+  --clip_size 512 \
+  --stride_size 256
+```
+
+**Vaihingen**
+
+```bash
+python tools/convert_datasets/vaihingen.py \
+  --dataset_path /path/to/vaihingen_raw \
+  --tmp_dir /path/to/tmp \
+  -o /path/to/vaihingen \
+  --clip_size 512 \
+  --stride_size 256
+```
+
+| Parameter | Type | Description | Default |
+| :-- | :-- | :-- | :-- |
+| `--dataset_path` | string | Folder containing raw `.zip` files | — |
+| `--tmp_dir` | string | Temporary directory for extraction | — |
+| `-o`, `--out_dir` | string | Output directory after conversion | `data/potsdam` or `data/vaihingen` |
+| `--clip_size` | int | Size of each clipped patch | `512` |
+| `--stride_size` | int | Stride when sliding over large images | `256` |
+
+The scripts will automatically extract archives, convert RGB labels to index maps, clip large orthophotos into patches, and split train/val according to the predefined tile lists in [`potsdam.py`](tools/convert_datasets/potsdam.py) / [`vaihingen.py`](tools/convert_datasets/vaihingen.py).
+
+After conversion, update `data_root` in [`local_configs/_base_/datasets/potsdam.py`](local_configs/_base_/datasets/potsdam.py) / [`vaihingen.py`](local_configs/_base_/datasets/vaihingen.py). The expected layout is:
 
 ```
 potsdam/  (or vaihingen/)
@@ -196,26 +231,77 @@ You can create your own config by using [`local_configs/versus/potsdam/SFMNet.51
 
 ### 4. Evaluation
 
+We provide two ways to run evaluation: multi-GPU via [`dist_test.sh`](tools/dist_test.sh), or single-GPU via [`test.py`](tools/test.py).
+
+#### Supported Metrics
+
+Pass one or more metrics via `--eval`. The following metrics correspond to the columns in the experimental tables above:
+
+| `--eval` flag | Reported metric | Description |
+| :-- | :-- | :-- |
+| `mIoU` | **mIoU**, **OA** | Mean Intersection-over-Union and Overall Accuracy |
+| `mBIoU` | **BmIoU** | Mean Boundary IoU (boundary-aware segmentation quality) |
+| `mFscore` | **F1**, **Precision**, **Recall** | Mean F1-score and its precision / recall components |
+
+To reproduce all metrics in the paper tables, use:
+
+```bash
+--eval mIoU mFscore mBIoU
+```
+
+> **Note:** `mBIoU` requires full prediction maps and cannot be computed via the pre-eval fast path. When `mBIoU` is included, [`test.py`](tools/test.py) automatically disables pre-eval mode.
+
+#### Multi-GPU (distributed)
+
 Evaluate on **Potsdam**:
 
 ```bash
 ./tools/dist_test.sh local_configs/versus/potsdam/SFMNet.512x512.potsdam.160k.py \
-  /path/to/potsdam_checkpoint.pth 2 --eval mIoU
+  /path/to/potsdam_checkpoint.pth 2 --eval mIoU mFscore mBIoU
 ```
 
 Evaluate on **Vaihingen**:
 
 ```bash
 ./tools/dist_test.sh local_configs/versus/vaihingen/SFMNet.512x512.vaihingen.160k.py \
-  /path/to/vaihingen_checkpoint.pth 2 --eval mIoU
+  /path/to/vaihingen_checkpoint.pth 2 --eval mIoU mFscore mBIoU
 ```
 
 Evaluate on **LoveDA**:
 
 ```bash
 ./tools/dist_test.sh local_configs/versus/loveda/SFMNet.512x512.loveda.160k.py \
-  /path/to/loveda_checkpoint.pth 2 --eval mIoU
+  /path/to/loveda_checkpoint.pth 2 --eval mIoU mFscore mBIoU
 ```
+
+#### Single-GPU (`test.py`)
+
+For single-GPU evaluation, use [`tools/test.py`](tools/test.py) directly:
+
+```bash
+python tools/test.py local_configs/versus/potsdam/SFMNet.512x512.potsdam.160k.py \
+  /path/to/potsdam_checkpoint.pth --eval mIoU mFscore mBIoU --gpu-id 0
+```
+
+```bash
+python tools/test.py local_configs/versus/vaihingen/SFMNet.512x512.vaihingen.160k.py \
+  /path/to/vaihingen_checkpoint.pth --eval mIoU mFscore mBIoU --gpu-id 0
+```
+
+```bash
+python tools/test.py local_configs/versus/loveda/SFMNet.512x512.loveda.160k.py \
+  /path/to/loveda_checkpoint.pth --eval mIoU mFscore mBIoU --gpu-id 0
+```
+
+Optional flags for [`test.py`](tools/test.py):
+
+| Flag | Description |
+| :-- | :-- |
+| `--eval` | Evaluation metrics, e.g. `mIoU mFscore mBIoU` |
+| `--gpu-id` | GPU id for single-GPU testing (default: `0`) |
+| `--show-dir` | Save visualized segmentation results to a directory |
+| `--work-dir` | Save evaluation metrics as JSON |
+| `--aug-test` | Enable flip and multi-scale augmentation during testing |
 
 #### Parameter Explanation
 
@@ -223,8 +309,8 @@ Evaluate on **LoveDA**:
 | :-- | :-- | :-- | :--: |
 | config | string | Path to the config file | ✅ |
 | checkpoint | string | Path to the trained checkpoint (`.pth`) | ✅ |
-| GPUS | int | Number of GPUs for distributed testing (default: 2) | ✅ |
-| `--eval mIoU` | flag | Compute mean IoU on the validation set | ✅ |
+| GPUS | int | Number of GPUs for distributed testing (`dist_test.sh` only, default: 2) | ✅ |
+| `--eval` | flag(s) | One or more of `mIoU`, `mFscore`, `mBIoU` | ✅ |
 
 ## Citation
 
